@@ -151,6 +151,7 @@ class Service:
             vm_auth_token=vm["vm_auth_token"],
             device=device,
             run_command=self.executor.run,
+            ssl_context=tls.context_for(pairing.get("ca_cert")),
         )
         log.info("connecting to %s", vm["vm_name"] or vm["vm_id"])
         started = time.monotonic()

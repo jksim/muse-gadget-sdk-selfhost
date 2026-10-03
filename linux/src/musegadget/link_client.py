@@ -34,6 +34,7 @@ import asyncio
 import enum
 import json
 import logging
+import ssl
 import struct
 import time
 import uuid
@@ -139,8 +140,10 @@ class LinkSession:
         device: DeviceDescription,
         run_command: Callable[[str, dict, int | None], dict],
         connect=None,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         self._url = noise_url(noise_host, vm_id)
+        self._ssl = ssl_context
         self._token = vm_auth_token
         self._device = device
         self._run_command = run_command
@@ -185,8 +188,11 @@ class LinkSession:
     async def _open(self):
         connect = self._connect
         headers = {"Authorization": f"Bearer {self._token}"}
+        # A provisioned CA is passed only when present, so the default path
+        # connects exactly as it always has.
+        tls_kwargs = {"ssl": self._ssl} if self._ssl is not None else {}
         if connect is not None:
-            return await connect(self._url, headers)
+            return await connect(self._url, headers, **tls_kwargs)
         from websockets.asyncio.client import connect
         from websockets.exceptions import InvalidStatus
 
@@ -199,6 +205,7 @@ class LinkSession:
                 ping_interval=PING_INTERVAL_S,
                 ping_timeout=PING_INTERVAL_S,
                 max_size=None,
+                **tls_kwargs,
             )
         except InvalidStatus as exc:
             status = exc.response.status_code

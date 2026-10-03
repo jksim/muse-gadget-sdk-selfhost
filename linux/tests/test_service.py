@@ -232,3 +232,41 @@ def test_an_unusable_provisioned_ca_waits_instead_of_connecting(tmp_path, monkey
 
     asyncio.run(scenario())
     assert (tmp_path / "pairing.json").exists()
+
+
+def session_kwargs_for(pairing, monkeypatch) -> dict:
+    """The kwargs Service passes to LinkSession for ``pairing``."""
+    from musegadget.link_client import Outcome
+
+    seen = {}
+
+    class Session:
+        registered_at = None
+
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+        async def run(self, stop):
+            return Outcome.STOPPED
+
+    monkeypatch.setattr("musegadget.service.LinkSession", Session)
+    vm = {"vm_id": "home", "vm_name": "home", "vm_auth_token": "t"}
+
+    async def scenario():
+        service = Service(identity=Identity("02:00:00:00:00:01"),
+                          executor=Executor(Account.current()))
+        await service._session(vm, pairing)
+
+    asyncio.run(scenario())
+    return seen
+
+
+def test_the_provisioned_ca_reaches_the_link_session(monkeypatch):
+    from certs import make_pki
+
+    kwargs = session_kwargs_for({**fresh_pairing(), "ca_cert": make_pki().ca_pem}, monkeypatch)
+    assert len(kwargs["ssl_context"].get_ca_certs()) == 1
+
+
+def test_without_a_provisioned_ca_the_link_session_uses_the_system_store(monkeypatch):
+    assert session_kwargs_for(fresh_pairing(), monkeypatch)["ssl_context"] is None

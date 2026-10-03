@@ -229,3 +229,72 @@ def test_send_chat_posts_a_device_attributed_message_on_the_same_session():
         task.cancel()
 
     asyncio.run(scenario())
+
+
+def test_a_provisioned_ca_context_reaches_the_websocket_connect():
+    from certs import make_pki
+
+    from musegadget import tls
+
+    async def scenario():
+        seen = []
+
+        async def connect(url, headers, ssl=None):
+            seen.append(ssl)
+            raise ConnectionError("stop here")
+
+        context = tls.context_for(make_pki().ca_pem)
+        session = LinkSession(
+            noise_host="gw.example", vm_id="vm", vm_auth_token="tok", device=DEVICE,
+            run_command=lambda *args: {}, connect=connect, ssl_context=context,
+        )
+        with pytest.raises(ConnectionError):
+            await session.run(asyncio.Event())
+        assert seen == [context]
+
+    asyncio.run(scenario())
+
+
+def wss_open(pki, tmp_path, client_ca_pem):
+    """Open a real wss:// connection to a server using ``pki``'s cert."""
+    import ssl
+
+    from websockets.asyncio.server import serve
+
+    from musegadget import tls
+
+    (tmp_path / "s.pem").write_text(pki.cert_pem)
+    (tmp_path / "s.key").write_text(pki.key_pem)
+    server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.load_cert_chain(str(tmp_path / "s.pem"), str(tmp_path / "s.key"))
+
+    async def handler(ws):
+        await ws.wait_closed()
+
+    async def scenario():
+        async with serve(handler, "127.0.0.1", 0, ssl=server_ctx) as server:
+            port = server.sockets[0].getsockname()[1]
+            session = LinkSession(
+                noise_host=f"localhost:{port}", vm_id="vm", vm_auth_token="tok", device=DEVICE,
+                run_command=lambda *args: {}, ssl_context=tls.context_for(client_ca_pem),
+            )
+            ws = await session._open()
+            await ws.close()
+
+    asyncio.run(scenario())
+
+
+def test_wss_to_a_host_with_a_private_ca_works_through_that_ca(tmp_path):
+    from certs import make_pki
+
+    pki = make_pki()
+    wss_open(pki, tmp_path, pki.ca_pem)
+
+
+def test_wss_to_a_host_with_a_private_ca_fails_with_another_ca(tmp_path):
+    import ssl
+
+    from certs import make_pki
+
+    with pytest.raises(ssl.SSLCertVerificationError):
+        wss_open(make_pki(), tmp_path, make_pki("other CA").ca_pem)
