@@ -57,14 +57,15 @@ class Pipe:
 class FakeVm:
     """Just enough of the Muse VM: Noise responder plus the control stream."""
 
-    def __init__(self, ws: Pipe) -> None:
+    def __init__(self, ws: Pipe, static_key=None) -> None:
         self.ws = ws
+        self.static_key = static_key
         self.decoder = NoiseFrameDecoder()
         self.messages = MessageDecoder()
         self.stream_id = 0
 
     async def handshake(self) -> None:
-        responder = NoiseXXResponder()
+        responder = NoiseXXResponder(static_private_key=self.static_key)
         responder.initialize()
         await self.ws.send(responder.read_message1_and_write_message2(await self.ws.recv()))
         responder.read_message3(await self.ws.recv())
@@ -103,7 +104,7 @@ class FakeVm:
         ))
 
 
-def make_session(run_command, connect_log: list):
+def make_session(run_command, connect_log: list, static_key=None, pin=None):
     to_device, to_vm = asyncio.Queue(), asyncio.Queue()
     device_ws, vm_ws = Pipe(to_device, to_vm), Pipe(to_vm, to_device)
 
@@ -113,9 +114,9 @@ def make_session(run_command, connect_log: list):
 
     session = LinkSession(
         noise_host="gw.example", vm_id="vm 1&x", vm_auth_token="tok",
-        device=DEVICE, run_command=run_command, connect=connect,
+        device=DEVICE, run_command=run_command, connect=connect, noise_static_pub=pin,
     )
-    return session, FakeVm(vm_ws)
+    return session, FakeVm(vm_ws, static_key)
 
 
 def test_register_invoke_result_and_unpair():
@@ -298,3 +299,44 @@ def test_wss_to_a_host_with_a_private_ca_fails_with_another_ca(tmp_path):
 
     with pytest.raises(ssl.SSLCertVerificationError):
         wss_open(make_pki(), tmp_path, make_pki("other CA").ca_pem)
+
+
+def raw_public(key) -> bytes:
+    from cryptography.hazmat.primitives import serialization
+
+    return key.public_key().public_bytes(serialization.Encoding.Raw,
+                                         serialization.PublicFormat.Raw)
+
+
+def test_a_matching_noise_key_pin_registers():
+    from cryptography.hazmat.primitives.asymmetric import x25519
+
+    async def scenario():
+        key = x25519.X25519PrivateKey.generate()
+        session, vm = make_session(lambda *a: {}, [], static_key=key, pin=raw_public(key))
+        task = asyncio.ensure_future(session.run(asyncio.Event()))
+        await vm.handshake()
+        await vm.accept_control_stream()
+        assert (await vm.next_message())["method"] == "link.register"
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_wrong_noise_key_pin_is_refused_before_registering():
+    from cryptography.hazmat.primitives.asymmetric import x25519
+
+    async def scenario():
+        pinned = x25519.X25519PrivateKey.generate()
+        session, vm = make_session(lambda *a: {}, [],
+                                   static_key=x25519.X25519PrivateKey.generate(),
+                                   pin=raw_public(pinned))
+        task = asyncio.ensure_future(session.run(asyncio.Event()))
+        responder = NoiseXXResponder(static_private_key=vm.static_key)
+        responder.initialize()
+        await vm.ws.send(responder.read_message1_and_write_message2(await vm.ws.recv()))
+        assert await asyncio.wait_for(task, 2) is Outcome.FORBIDDEN
+        with pytest.raises(ConnectionError):
+            await vm.ws.recv()  # closed: no message 3, no register
+
+    asyncio.run(scenario())

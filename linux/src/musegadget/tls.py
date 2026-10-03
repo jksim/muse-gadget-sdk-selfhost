@@ -18,11 +18,18 @@ Pairing may provision ``ca_cert``, the PEM of the host's own CA. It then
 replaces the system store rather than adding to it, so the gadget trusts
 nothing else for its host, and hostname checks stay on. Without it the
 system store is used exactly as before.
+
+Pairing may also provision ``noise_static_pub``, the host's Noise static
+public key, which the link then requires the responder to present.
 """
 
 from __future__ import annotations
 
 import ssl
+
+from musegadget.pairing import b64url_decode
+
+NOISE_KEY_BYTES = 32
 
 
 def context_for(ca_pem: str | None) -> ssl.SSLContext | None:
@@ -36,3 +43,17 @@ def context_for(ca_pem: str | None) -> ssl.SSLContext | None:
         return ssl.create_default_context(cadata=ca_pem)
     except (ssl.SSLError, ValueError) as exc:
         raise ValueError(f"invalid CA certificate: {exc}") from None
+
+
+def parse_static_key(text: str) -> bytes:
+    """The 32-byte X25519 key in a ``noise_static_pub`` pin.
+
+    Raises ValueError unless ``text`` is exactly 32 bytes of unpadded base64url.
+    """
+    try:
+        key = b64url_decode(text)
+    except ValueError:
+        raise ValueError("invalid Noise static key: not unpadded base64url") from None
+    if len(key) != NOISE_KEY_BYTES:
+        raise ValueError(f"invalid Noise static key: {len(key)} bytes, expected 32")
+    return key

@@ -39,3 +39,22 @@ def test_a_ca_that_is_not_a_certificate_is_rejected():
         tls.context_for("-----BEGIN CERTIFICATE-----\nnot base64\n-----END CERTIFICATE-----\n")
     with pytest.raises(ValueError):
         tls.context_for("hello")
+
+
+def test_a_noise_static_key_pin_is_32_bytes_of_unpadded_base64url():
+    import base64
+
+    raw = bytes(range(32))
+    assert tls.parse_static_key(base64.urlsafe_b64encode(raw).rstrip(b"=").decode()) == raw
+
+
+@pytest.mark.parametrize("text", [
+    "A" * 42,                         # 31 bytes
+    "A" * 44,                         # 33 bytes
+    "A" * 43 + "=",                   # padded
+    "+" * 43,                         # standard base64 alphabet
+    "",
+])
+def test_a_malformed_noise_static_key_pin_is_rejected(text):
+    with pytest.raises(ValueError):
+        tls.parse_static_key(text)

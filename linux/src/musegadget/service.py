@@ -59,6 +59,12 @@ def _tls_kwargs(pairing: dict) -> dict:
     return {"context": context} if context else {}
 
 
+def _noise_pin(pairing: dict) -> bytes | None:
+    """The host's Noise static key if pairing provisioned a pin, else None."""
+    pin = pairing.get("noise_static_pub")
+    return tls.parse_static_key(pin) if pin else None
+
+
 @dataclass
 class Backoff:
     failures: int = 0
@@ -100,8 +106,10 @@ class Service:
                 continue
             try:
                 tls_kwargs = _tls_kwargs(pairing)
+                _noise_pin(pairing)
             except ValueError as exc:
-                log.error("pairing has an unusable CA (%s); run `musegadget pair` again", exc)
+                log.error("pairing has unusable trust settings (%s); "
+                          "run `musegadget pair` again", exc)
                 await self._sleep(UNPAIRED_POLL_S)
                 continue
             pairing = await self._maybe_refresh(pairing)
@@ -152,6 +160,7 @@ class Service:
             device=device,
             run_command=self.executor.run,
             ssl_context=tls.context_for(pairing.get("ca_cert")),
+            noise_static_pub=_noise_pin(pairing),
         )
         log.info("connecting to %s", vm["vm_name"] or vm["vm_id"])
         started = time.monotonic()

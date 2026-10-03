@@ -335,6 +335,16 @@ def _generate_x25519_key_pair() -> _X25519KeyPair:
     return _X25519KeyPair(private_key=private_key, public_key_bytes=public_key_bytes)
 
 
+def _static_key_pair(private_key: Optional[x25519.X25519PrivateKey]) -> _X25519KeyPair:
+    if private_key is None:
+        return _generate_x25519_key_pair()
+    public_key_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return _X25519KeyPair(private_key=private_key, public_key_bytes=public_key_bytes)
+
+
 def _x25519_dh(private_key: x25519.X25519PrivateKey, public_key_bytes: bytes) -> bytes:
     public_key_bytes = bytes(public_key_bytes)
     if len(public_key_bytes) != DH_KEY_LEN:
@@ -515,12 +525,20 @@ class NoiseXXInitiator:
 
 
 class NoiseXXResponder:
-    """Test responder for protocol verification."""
+    """Test responder for protocol verification.
 
-    def __init__(self, payload: bytes = b"") -> None:
+    ``static_private_key`` fixes the responder's static key, as a real host
+    must for devices that pin it; by default each handshake makes a new one.
+    """
+
+    def __init__(
+        self, payload: bytes = b"",
+        static_private_key: Optional[x25519.X25519PrivateKey] = None,
+    ) -> None:
         self._ss = _SymmetricState()
         self._e: Optional[_X25519KeyPair] = None
         self._s: Optional[_X25519KeyPair] = None
+        self._static_private_key = static_private_key
         self._re: Optional[bytes] = None
         self._payload = bytes(payload)
         self._phase = _Phase.CREATED
@@ -549,7 +567,7 @@ class NoiseXXResponder:
             ee = _x25519_dh(self._e.private_key, self._re)
             self._ss.mix_key(ee)
 
-            self._s = _generate_x25519_key_pair()
+            self._s = _static_key_pair(self._static_private_key)
             enc_s = self._ss.encrypt_and_hash(self._s.public_key_bytes)
 
             es = _x25519_dh(self._s.private_key, self._re)

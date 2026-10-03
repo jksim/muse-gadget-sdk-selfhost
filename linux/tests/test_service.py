@@ -270,3 +270,32 @@ def test_the_provisioned_ca_reaches_the_link_session(monkeypatch):
 
 def test_without_a_provisioned_ca_the_link_session_uses_the_system_store(monkeypatch):
     assert session_kwargs_for(fresh_pairing(), monkeypatch)["ssl_context"] is None
+
+
+def test_the_provisioned_noise_key_pin_reaches_the_link_session(monkeypatch):
+    import base64
+
+    raw = bytes(range(32))
+    pin = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+    kwargs = session_kwargs_for({**fresh_pairing(), "noise_static_pub": pin}, monkeypatch)
+    assert kwargs["noise_static_pub"] == raw
+
+
+def test_without_a_noise_key_pin_the_link_session_accepts_any_key(monkeypatch):
+    assert session_kwargs_for(fresh_pairing(), monkeypatch)["noise_static_pub"] is None
+
+
+def test_an_unusable_noise_key_pin_waits_instead_of_connecting(tmp_path, monkeypatch):
+    monkeypatch.setenv("MUSEGADGET_STATE_DIR", str(tmp_path))
+    (tmp_path / "pairing.json").write_text(
+        json.dumps({**fresh_pairing(), "noise_static_pub": "short"}))
+    monkeypatch.setattr("musegadget.service.muse_api.fetch_vms_with_status",
+                        lambda *args, **kwargs: pytest.fail("fetched with an unusable pin"))
+
+    async def scenario():
+        service = Service(identity=Identity("02:00:00:00:00:01"),
+                          executor=Executor(Account.current()))
+        asyncio.get_running_loop().call_later(0.1, service.stop)
+        await service.run()
+
+    asyncio.run(scenario())

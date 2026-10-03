@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import hmac
 import json
 import logging
 import ssl
@@ -141,9 +142,11 @@ class LinkSession:
         run_command: Callable[[str, dict, int | None], dict],
         connect=None,
         ssl_context: ssl.SSLContext | None = None,
+        noise_static_pub: bytes | None = None,
     ) -> None:
         self._url = noise_url(noise_host, vm_id)
         self._ssl = ssl_context
+        self._noise_pin = noise_static_pub
         self._token = vm_auth_token
         self._device = device
         self._run_command = run_command
@@ -164,7 +167,11 @@ class LinkSession:
             return Outcome.AUTH_REJECTED if rejected.status == 401 else Outcome.FORBIDDEN
         try:
             self._ws = ws
-            self._transport = await asyncio.wait_for(self._handshake(ws), HANDSHAKE_TIMEOUT_S)
+            try:
+                self._transport = await asyncio.wait_for(self._handshake(ws), HANDSHAKE_TIMEOUT_S)
+            except _PinMismatch:
+                log.error("Noise static key mismatch; refusing this host")
+                return Outcome.FORBIDDEN
             await self._open_control_stream()
             reader = asyncio.ensure_future(self._read_loop())
             stopper = asyncio.ensure_future(stop.wait())
@@ -221,6 +228,10 @@ class LinkSession:
         if isinstance(msg2, str):
             raise ConnectionError("Noise handshake got a text frame")
         initiator.read_message2(bytes(msg2))
+        if self._noise_pin is not None and not hmac.compare_digest(
+            initiator.remote_static_public_key() or b"", self._noise_pin,
+        ):
+            raise _PinMismatch()
         # The bearer already authenticated us at the upgrade; message 3
         # carries an empty payload.
         await ws.send(initiator.write_message3())
@@ -392,6 +403,10 @@ class _NoRequest:
 
 
 _NO_REQUEST = _NoRequest()
+
+
+class _PinMismatch(Exception):
+    """The responder's Noise static key is not the provisioned one."""
 
 
 class _UpgradeRejected(Exception):
