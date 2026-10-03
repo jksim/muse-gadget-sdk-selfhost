@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import platform
+import ssl
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -56,21 +57,30 @@ def user_agent() -> str:
     )
 
 
+def _urlopen(req: urllib.request.Request, context: ssl.SSLContext | None):
+    # Pass a context only when one was provisioned, so the default path makes
+    # exactly the call it always has.
+    if context is None:
+        return urllib.request.urlopen(req, timeout=15)
+    return urllib.request.urlopen(req, timeout=15, context=context)
+
+
 def fetch_vms_with_status(
-    access_token: str, root: str = api_root()
+    access_token: str, root: str = api_root(), context: ssl.SSLContext | None = None,
 ) -> tuple[list[dict], int | None]:
     """Leased VMs for the device token, plus the HTTP status if one arrived.
 
     Returns ``(vms, status)``; ``status`` is ``None`` when no HTTP response
     was obtained. A 401 means the device token was rejected, which a retry
     won't fix; a ``None`` status is a transport failure worth retrying.
+    ``context`` is the provisioned CA's TLS context, if any.
     """
     req = urllib.request.Request(root + FETCH_PATH, method="GET")
     req.add_header("Authorization", f"Bearer {access_token}")
     req.add_header("X-API-Version", "1.0.0")
     req.add_header("User-Agent", user_agent())
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with _urlopen(req, context) as resp:
             status = resp.getcode()
             data = json.loads(resp.read())
     except urllib.error.HTTPError as exc:
@@ -112,6 +122,7 @@ def fetch_vms_with_status(
 
 def _post_refresh(
     auth_header: str, device_id: str, root: str, sdk_token: str | None,
+    context: ssl.SSLContext | None,
 ) -> dict | None:
     body = {"device_id": device_id}
     if sdk_token:
@@ -124,7 +135,7 @@ def _post_refresh(
     req.add_header("Authorization", auth_header)
     req.add_header("Content-Type", "application/json")
     req.add_header("User-Agent", user_agent())
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    with _urlopen(req, context) as resp:
         data = json.loads(resp.read())
     if isinstance(data, dict) and isinstance(data.get("payload"), dict):
         data = data["payload"]
@@ -136,7 +147,7 @@ def _post_refresh(
 
 def refresh_device_token(
     refresh_token: str, device_id: str, root: str = api_root(),
-    sdk_token: str | None = None,
+    sdk_token: str | None = None, context: ssl.SSLContext | None = None,
 ) -> tuple[dict | None, int | None]:
     """Rotate the device token pair with the refresh token.
 
@@ -153,7 +164,9 @@ def refresh_device_token(
     # prefix; doubling it makes the server reject it. Same rule as the ESP32.
     raw_refresh = refresh_token.rsplit(":", 1)[-1]
     try:
-        return _post_refresh(f"Bearer hatch_refresh:{raw_refresh}", device_id, root, sdk_token), 200
+        return _post_refresh(
+            f"Bearer hatch_refresh:{raw_refresh}", device_id, root, sdk_token, context,
+        ), 200
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
             log.warning("token refresh rejected: device must be paired again")

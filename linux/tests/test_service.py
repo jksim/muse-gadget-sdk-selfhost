@@ -167,3 +167,68 @@ def test_a_rejected_sdk_token_report_keeps_the_pairing(tmp_path, monkeypatch):
 def test_api_root_uses_api_url_v2_or_the_muse_api():
     assert muse_api.api_root("https://api.example/") == "https://api.example"
     assert muse_api.api_root() == "https://api.muse.ai"
+
+
+def test_the_provisioned_ca_reaches_the_refresh_call(tmp_path, monkeypatch):
+    from certs import make_pki
+
+    monkeypatch.setenv("MUSEGADGET_STATE_DIR", str(tmp_path))
+    seen = []
+
+    def refresh(refresh_token, node_id, base_url, sdk_token, context=None):
+        seen.append(context)
+        return {"access_token": "new-a", "refresh_token": "new-r"}, 200
+
+    monkeypatch.setattr("musegadget.service.muse_api.refresh_device_token", refresh)
+    stale = {**fresh_pairing(), "access_token_saved_at": 0, "ca_cert": make_pki().ca_pem}
+    refresh_with({}, stale)
+    assert len(seen) == 1 and len(seen[0].get_ca_certs()) == 1
+
+
+def run_one_round(tmp_path, monkeypatch, pairing) -> list:
+    """Run the service loop until its first VM fetch; returns fetch kwargs."""
+    monkeypatch.setenv("MUSEGADGET_STATE_DIR", str(tmp_path))
+    (tmp_path / "pairing.json").write_text(json.dumps(pairing))
+    calls = []
+
+    async def scenario():
+        service = Service(identity=Identity("02:00:00:00:00:01"),
+                          executor=Executor(Account.current()))
+
+        def fetch(access_token, root, **kwargs):
+            calls.append(kwargs)
+            service.stop()
+            return [], 500
+
+        monkeypatch.setattr("musegadget.service.muse_api.fetch_vms_with_status", fetch)
+        await service.run()
+
+    asyncio.run(scenario())
+    return calls
+
+
+def test_the_provisioned_ca_reaches_the_vm_fetch(tmp_path, monkeypatch):
+    from certs import make_pki
+
+    calls = run_one_round(tmp_path, monkeypatch, {**fresh_pairing(), "ca_cert": make_pki().ca_pem})
+    assert len(calls[0]["context"].get_ca_certs()) == 1
+
+
+def test_without_a_provisioned_ca_the_vm_fetch_is_unchanged(tmp_path, monkeypatch):
+    assert run_one_round(tmp_path, monkeypatch, fresh_pairing()) == [{}]
+
+
+def test_an_unusable_provisioned_ca_waits_instead_of_connecting(tmp_path, monkeypatch):
+    monkeypatch.setenv("MUSEGADGET_STATE_DIR", str(tmp_path))
+    (tmp_path / "pairing.json").write_text(json.dumps({**fresh_pairing(), "ca_cert": "hello"}))
+    monkeypatch.setattr("musegadget.service.muse_api.fetch_vms_with_status",
+                        lambda *args, **kwargs: pytest.fail("fetched with an unusable CA"))
+
+    async def scenario():
+        service = Service(identity=Identity("02:00:00:00:00:01"),
+                          executor=Executor(Account.current()))
+        asyncio.get_running_loop().call_later(0.1, service.stop)
+        await service.run()
+
+    asyncio.run(scenario())
+    assert (tmp_path / "pairing.json").exists()

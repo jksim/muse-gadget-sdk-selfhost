@@ -33,7 +33,7 @@ import socket
 import time
 from dataclasses import dataclass, field
 
-from musegadget import __version__, config, muse_api
+from musegadget import __version__, config, muse_api, tls
 from musegadget.executor import COMMAND_SPECS, Executor
 from musegadget.identity import Identity
 from musegadget.link_client import DeviceDescription, LinkSession, Outcome
@@ -51,6 +51,12 @@ _SESSION_ID_RE = re.compile(r"[A-Za-z0-9-]{1,64}")
 # Device access tokens live about 4 hours; rotate at 3.
 TOKEN_REFRESH_AGE_S = 3 * 3600
 TOKEN_RETRY_S = 300
+
+
+def _tls_kwargs(pairing: dict) -> dict:
+    """``context=`` for API calls when pairing provisioned a CA, else nothing."""
+    context = tls.context_for(pairing.get("ca_cert"))
+    return {"context": context} if context else {}
 
 
 @dataclass
@@ -92,6 +98,12 @@ class Service:
                 log.info("not paired; run `musegadget pair` to set up")
                 await self._sleep(UNPAIRED_POLL_S)
                 continue
+            try:
+                tls_kwargs = _tls_kwargs(pairing)
+            except ValueError as exc:
+                log.error("pairing has an unusable CA (%s); run `musegadget pair` again", exc)
+                await self._sleep(UNPAIRED_POLL_S)
+                continue
             pairing = await self._maybe_refresh(pairing)
             if pairing is None:
                 await self._sleep(TOKEN_RETRY_S)
@@ -99,7 +111,7 @@ class Service:
 
             api = muse_api.api_root(pairing.get("api_url_v2", ""))
             vms, status = await asyncio.to_thread(
-                muse_api.fetch_vms_with_status, pairing["access_token"], api,
+                muse_api.fetch_vms_with_status, pairing["access_token"], api, **tls_kwargs,
             )
             if status == 401:
                 log.warning("device token rejected by the API; refreshing")
@@ -177,6 +189,7 @@ class Service:
             pairing["refresh_token"], self.identity.node_id,
             muse_api.api_root(pairing.get("api_url_v2", "")),
             self.sdk_token,
+            **_tls_kwargs(pairing),
         )
         if tokens:
             pairing = {
