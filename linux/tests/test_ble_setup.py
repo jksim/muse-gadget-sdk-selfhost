@@ -292,3 +292,50 @@ def test_writes_are_reassembled_before_dispatch():
     finally:
         h.controller.stop()
     assert h.transport.messages[0]["type"] == "pairing_ready"
+
+
+def provisioned_trust():
+    import base64
+
+    from certs import make_pki
+
+    return {
+        "ca_cert": make_pki().ca_pem,
+        "noise_static_pub": base64.urlsafe_b64encode(bytes(range(32))).rstrip(b"=").decode(),
+    }
+
+
+def test_provision_carries_the_hosts_ca_and_noise_key_pin():
+    trust = provisioned_trust()
+    h = Harness()
+    h.pair()
+    h.send_encrypted({**PROVISION, **trust})
+    h.wait_for_status("auth_ok")
+    saved = h.saved[0]
+    assert (saved.ca_cert, saved.noise_static_pub) == (trust["ca_cert"], trust["noise_static_pub"])
+
+
+def test_provision_without_trust_fields_leaves_them_empty():
+    h = Harness()
+    h.pair()
+    h.send_encrypted(PROVISION)
+    h.wait_for_status("auth_ok")
+    assert (h.saved[0].ca_cert, h.saved[0].noise_static_pub) == ("", "")
+
+
+@pytest.mark.parametrize(
+    "change, status",
+    [
+        ({"ca_cert": "hello"}, "error_invalid_ca"),
+        ({"ca_cert": 7}, "error_invalid_ca"),
+        ({"noise_static_pub": "short"}, "error_invalid_noise_key"),
+        ({"noise_static_pub": ["x"]}, "error_invalid_noise_key"),
+    ],
+)
+def test_provision_rejects_unusable_trust_fields(change, status):
+    h = Harness()
+    h.pair()
+    h.send_encrypted({**PROVISION, **provisioned_trust(), **change})
+    assert h.statuses()[-1] == status
+    assert h.pairing.state is PairingState.READY
+    assert h.saved == []

@@ -24,7 +24,7 @@ import threading
 import time
 from typing import Callable
 
-from musegadget import __version__, config, identity, muse_api, network
+from musegadget import __version__, config, identity, muse_api, network, tls
 from musegadget.ble_setup import Credentials, ProvisionFailed, SetupController
 from musegadget.pairing import PairingSession
 
@@ -42,8 +42,10 @@ class _SystemNetwork:
 def _verify_and_save(credentials: Credentials, commit: Callable[[Callable[[], bool]], bool]) -> None:
     api_url = credentials.api_url if credentials.api_url.startswith("https://") else ""
     api_url_v2 = credentials.api_url_v2 if credentials.api_url_v2.startswith("https://") else ""
+    context = tls.context_for(credentials.ca_cert)
     vms, status = muse_api.fetch_vms_with_status(
         credentials.access_token, muse_api.api_root(api_url_v2),
+        **({"context": context} if context else {}),
     )
     if not vms:
         log.warning("device token check failed (HTTP %s, %d VMs)", status, len(vms))
@@ -59,6 +61,10 @@ def _verify_and_save(credentials: Credentials, commit: Callable[[Callable[[], bo
         "noise_host": credentials.noise_host,
         "access_token_saved_at": int(time.time()),
     }
+    if credentials.ca_cert:
+        record["ca_cert"] = credentials.ca_cert
+    if credentials.noise_static_pub:
+        record["noise_static_pub"] = credentials.noise_static_pub
 
     def save() -> bool:
         config.save_json(config.PAIRING_FILE, record)

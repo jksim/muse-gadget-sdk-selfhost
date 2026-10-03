@@ -29,6 +29,7 @@ import threading
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
+from musegadget import tls
 from musegadget.ble_framing import ChunkAssembler, encode_chunks
 from musegadget.identity import Identity
 from musegadget.pairing import PairingError, PairingSession
@@ -71,6 +72,9 @@ class Credentials:
     api_url: str
     api_url_v2: str
     noise_host: str
+    # Set only when pairing with a self-hosted Muse; see tls.py.
+    ca_cert: str = ""
+    noise_static_pub: str = ""
 
 
 class ProvisionFailed(Exception):
@@ -79,6 +83,23 @@ class ProvisionFailed(Exception):
     def __init__(self, status: str) -> None:
         super().__init__(status)
         self.status = status
+
+
+def _trust_error(command: dict) -> str:
+    """The status for unusable ``ca_cert`` / ``noise_static_pub``, or ""."""
+    checks = (("ca_cert", tls.context_for, "error_invalid_ca"),
+              ("noise_static_pub", tls.parse_static_key, "error_invalid_noise_key"))
+    for key, parse, status in checks:
+        value = command.get(key)
+        if value is None or value == "":
+            continue
+        if not isinstance(value, str):
+            return status
+        try:
+            parse(value)
+        except ValueError:
+            return status
+    return ""
 
 
 def _compact(obj: dict) -> str:
@@ -248,6 +269,10 @@ class SetupController:
         ):
             self.send_status("error_missing_credentials")
             return
+        trust_error = _trust_error(command)
+        if trust_error:
+            self.send_status(trust_error)
+            return
         with self._state_lock:
             if self._provisioning:
                 self.send_status("error_operation_in_progress")
@@ -266,6 +291,8 @@ class SetupController:
             api_url=text("api_url"),
             api_url_v2=text("api_url_v2"),
             noise_host=text("noise_host"),
+            ca_cert=text("ca_cert"),
+            noise_static_pub=text("noise_static_pub"),
         )
         threading.Thread(
             target=self._run_provision, args=(credentials, generation),
