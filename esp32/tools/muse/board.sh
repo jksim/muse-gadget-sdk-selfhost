@@ -22,6 +22,8 @@
 # MUSE_BENCH=1 adds devices/sdkconfig.muse-bench (screenshots) and builds and
 # flashes in build-muse-<profile>-bench/, so neither build's sdkconfig hides
 # the other's.
+# MUSE_EXTRA_DEFAULTS=devices/sdkconfig.<name> appends that overlay (e.g.
+# sdkconfig.selfhost) and builds and flashes in build-muse-<profile>-<name>/.
 set -uo pipefail
 cmd=${1:?build|flash}; board=${2:?s3|s3n|aipi|box3|c6|watcher|sticks3|plus2|cardputer-adv|stopwatch|cores3}
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -56,6 +58,10 @@ B=build-muse-$profile
 defaults="sdkconfig.defaults;devices/sdkconfig.muse;devices/sdkconfig.muse-$profile"
 if [ -n "${MUSE_BENCH:-}" ]; then
     B=$B-bench; defaults="$defaults;devices/sdkconfig.muse-bench"
+fi
+if [ -n "${MUSE_EXTRA_DEFAULTS:-}" ]; then
+    extra=$(basename "$MUSE_EXTRA_DEFAULTS"); extra=${extra#sdkconfig.}
+    B=$B-$extra; defaults="$defaults;$MUSE_EXTRA_DEFAULTS"
 fi
 log=/tmp/muse_build_$board.log
 if [ "$cmd" = build ]; then
