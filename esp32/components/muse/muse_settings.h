@@ -31,6 +31,8 @@
 #define MUSE_SSID_MAX 32
 #define MUSE_PASS_MAX 64
 #define MUSE_HOST_MAX 63
+/* The Muse host when none is set; chat then follows Link's own host, if any. */
+#define MUSE_DEFAULT_HOST "hatch.metaaivm.com"
 #define MUSE_VM_MAX 63
 #define MUSE_TOKEN_MAX 1023
 

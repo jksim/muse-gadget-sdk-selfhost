@@ -29,7 +29,7 @@
 static const char *TAG = "muse_settings";
 
 #define NS "muse"
-#define DEFAULT_HOST "hatch.metaaivm.com"
+#define DEFAULT_HOST MUSE_DEFAULT_HOST
 
 static struct {
     uint8_t volume;

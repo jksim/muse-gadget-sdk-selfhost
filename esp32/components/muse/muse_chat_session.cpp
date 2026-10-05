@@ -879,8 +879,11 @@ static bool ensure_connected(void)
     }
     muse_hatch_report(MUSE_HATCH_TESTING, "Connecting...");
     muse_settings_hatch_host(s_host);
-    if (!s_host[0]) {
-        strlcpy(s_host, "hatch.metaaivm.com", sizeof(s_host));
+    // No host of its own: follow the host Link was provisioned with, so a
+    // gadget paired with a self-hosted Muse chats with that host too.
+    if ((!s_host[0] || strcmp(s_host, MUSE_DEFAULT_HOST) == 0)
+        && !muse_link_hatch_host(s_host, sizeof(s_host))) {
+        strlcpy(s_host, MUSE_DEFAULT_HOST, sizeof(s_host));
     }
     char err[48] = "";
     for (int attempt = 0; attempt < 2; attempt++) {

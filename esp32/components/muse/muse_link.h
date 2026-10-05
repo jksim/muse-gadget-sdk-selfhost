@@ -71,6 +71,7 @@ typedef struct {
     void (*wifi_nap)(bool nap);                   /* screen off a while: leave Wi-Fi until false */
     int (*wifi_saved)(muse_wifi_saved_t *out, int max);   /* most recently joined first */
     void (*wifi_forget)(const char *ssid);        /* one saved network; empty forgets them all */
+    bool (*hatch_host)(char *out, size_t cap);    /* Link's provisioned Noise host; false if none */
 } muse_link_ops_t;
 
 void muse_link_register(const muse_link_ops_t *ops);
@@ -83,6 +84,8 @@ const char *muse_link_state_name(muse_link_state_t state);
 bool muse_link_hatch_linked(void);
 bool muse_link_hatch_vm(const char *want_vm, char *vm_id, size_t id_cap, char *vm_name, size_t name_cap,
                         char **vm_token);
+/* Link's provisioned Noise host (e.g. a self-hosted Muse); false if none. */
+bool muse_link_hatch_host(char *out, size_t cap);
 bool muse_link_talk_press(void);
 void muse_link_reset_setup(void);
 /* The first saved network, owned by Link. Return false when Link hasn't registered. */
