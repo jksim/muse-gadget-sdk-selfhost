@@ -31,11 +31,15 @@ code for it. Clone the repo rather than reading it on the web, and search it.
 | Waveshare ESP32-S3-Touch-AMOLED-1.75C | [waveshareteam/ESP32-S3-Touch-AMOLED-1.75C](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75C) | `Schematic/`. `examples/esp-idf/` for the AXP2101 power chip (`01_AXP2101`) and the QMI8658 IMU (`04_Immersive_block`). `examples/arduino/examples/` for the ES7210 mics and the ES8311 codec. Muse drives the display, touch and codec through its BSP, `waveshare/esp32_s3_touch_amoled_1_75c`. |
 | Waveshare ESP32-S3-Touch-AMOLED-1.75 | [waveshareteam/ESP32-S3-Touch-AMOLED-1.75](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75) | The 1.75C's chips on other pins (LCD and touch reset on GPIO 39 and 40, MCLK on 42), plus an SD slot on GPIO 1 to 3 and a TCA9554 expander. PWR reaches the ESP32 only through the AXP2101. Muse uses the 1.75C driver with its BSP, `waveshare/esp32_s3_touch_amoled_1_75`. |
 | Seeed SenseCAP Watcher | [Seeed-Studio/SenseCAP-Watcher-Firmware](https://github.com/Seeed-Studio/SenseCAP-Watcher-Firmware) | `components/sensecap-watcher/` is Seeed's BSP. `include/sensecap-watcher.h` has the pins for the LCD, touch, knob, IO expander, audio, battery, SD card and the Himax camera chip (driven through `components/sscma_client/`). `examples/factory_firmware/` is the firmware it ships with. xiaozhi-esp32's [sensecap-watcher board](https://github.com/78/xiaozhi-esp32/tree/main/main/boards/sensecap-watcher) is a second reference. |
-| Every M5Stack board (StickS3, StickC Plus2, Cardputer ADV, StopWatch, CoreS3) | [m5stack/M5Unified](https://github.com/m5stack/M5Unified), and [M5GFX](https://github.com/m5stack/M5GFX) for the panels | `src/M5Unified.inl` for pins, buttons and audio. `src/utility/` for power and the battery (`Power_Class.inl`), the IMU, RTC, mic, speaker and LEDs. `src/M5GFX.cpp` in M5GFX for the panel. Search both for the model's `board_M5...` name. For the StopWatch, M5's factory firmware [m5stack/M5StopWatch-UserDemo](https://github.com/m5stack/M5StopWatch-UserDemo): `main/hal/` for the power chip, IO expander, buttons and audio, and `main/apps/app_stopwatch/view/view.cpp` for where the buttons sit. |
+| Every M5Stack board (StickS3, StickC Plus2, Cardputer ADV, StopWatch, CoreS3, Core2) | [m5stack/M5Unified](https://github.com/m5stack/M5Unified), and [M5GFX](https://github.com/m5stack/M5GFX) for the panels | `src/M5Unified.inl` for pins, buttons and audio. `src/utility/` for power and the battery (`Power_Class.inl`), the IMU, RTC, mic, speaker and LEDs. `src/M5GFX.cpp` in M5GFX for the panel. Search both for the model's `board_M5...` name. For the StopWatch, M5's factory firmware [m5stack/M5StopWatch-UserDemo](https://github.com/m5stack/M5StopWatch-UserDemo): `main/hal/` for the power chip, IO expander, buttons and audio, and `main/apps/app_stopwatch/view/view.cpp` for where the buttons sit. For the Core2, Espressif's BSP [esp-bsp/bsp/m5stack_core_2](https://github.com/espressif/esp-bsp/tree/master/bsp/m5stack_core_2): `m5stack_core_2.c` for the AXP rail setup, display, touch and speaker init. |
 | Espressif ESP32-S3-BOX-3 | [espressif/esp-bsp](https://github.com/espressif/esp-bsp) | `bsp/esp-box-3/`: pins in `include/bsp/esp-box-3.h`, LCD/touch revision detection and codecs in `esp-box-3.c`, duplex I2S in `esp-box-3_idf5.c`. |
 | M5Stack CoreS3 | [espressif/esp-bsp](https://github.com/espressif/esp-bsp) | `bsp/m5stack_core_s3/`: pins in `include/bsp/m5stack_core_s3.h`, the AXP2101 rails and AW9523 lines each part needs in `src/bsp_feature_en.c` and `src/bsp_io_expander.c`, codecs in `src/bsp_audio.c`. Muse drives it through that BSP, `espressif/m5stack_core_s3`. |
 | AIPI Lite | xiaozhi-esp32's [aipi-lite board](https://github.com/78/xiaozhi-esp32/tree/main/main/boards/xorigin/aipi-lite) | `config.h` for pins, then `aipi-lite.cc` and `power_manager.h`. |
+| Guition JC3248W535 | No vendor repo. [me-processware/JC3248W535-Driver](https://github.com/me-processware/JC3248W535-Driver), [sirisakG2/JC3248W535C](https://github.com/sirisakG2/JC3248W535C) | `src/JC3248W535_Display.h` and `src/JC3248W535_Touch.h` in the driver for the LCD and touch pins and the touch read command; the notes repo for the audio pins and USB. Arduino_GFX's `Arduino_AXS15231B.h` for the panel's init sequence. |
 | Home Assistant Voice Preview Edition | [esphome/home-assistant-voice-pe](https://github.com/esphome/home-assistant-voice-pe) | `home-assistant-voice.yaml`, its ESPHome config. |
+| Freenove FNK0104B | [Freenove/Freenove_ESP32_S3_Display](https://github.com/Freenove/Freenove_ESP32_S3_Display) | `Tutorial_With_Touch/Sketches/`: `Sketch_07.1_Music` (ES8311 + I2S pins), `Sketch_11.1_Touch` (FT6336U), `Sketch_05.1_Battery_Voltage` (battery divider), `Sketch_02.1_LedPixel` (WS2812 pin). `Libraries/FNK0104AB/` has the TFT_eSPI setup with the display pins. |
+| Waveshare ESP32-S3-Touch-LCD-7 | [waveshareteam/ESP32-S3-Touch-LCD-7](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-7), [waveshareteam/waveshare_boards](https://github.com/waveshareteam/waveshare_boards) | `examples/ESP-IDF/09_lvgl_v9_demo/components/waveshare_rgb_lcd_port.[ch]` for RGB timing, GT911 reset and CH422G output; `boards/esp32_s3_touch_lcd_7/` for the pin map. |
+| Seeed reSpeaker Lite | [respeaker/reSpeaker_Lite](https://github.com/respeaker/reSpeaker_Lite) | `doc/images/pinout.png`, the I2C examples, `xmos_firmwares/`. |
 
 For the Cardputer ADV keyboard, also read [m5stack/M5Cardputer](https://github.com/m5stack/M5Cardputer), especially `src/utility/Keyboard/KeyboardReader/TCA8418.cpp` and `src/utility/Adafruit_TCA8418/`.
 
@@ -108,8 +112,9 @@ settings grouped under short comments saying why. Set:
   (see `sdkconfig.sensecap-indicator`). With no PSRAM, copy the whole block from
   `sdkconfig.ideaspark`: `CONFIG_SPIRAM=n`, mbedtls internal allocation,
   `CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096` and `CONFIG_HOMEHUB_TUNNEL=n`.
-- `CONFIG_HOMEHUB_BLE_NAME_PREFIX="HomeLink-Disp"` on status-screen boards.
-  Light boards keep the default, and `sdkconfig.muse` sets `MuseGadget`.
+- `CONFIG_HOMEHUB_BLE_NAME_SUFFIX="-Disp"` on status-screen boards, which
+  advertise as `MuseGadget-Disp-XXXXXX`. Light boards keep the defaults, and
+  `sdkconfig.muse` sets the `MuseGadget` prefix explicitly.
 - On a classic ESP32, `sdkconfig.ideaspark`'s chip block: `CONFIG_ESP32_REV_MIN_3=y`
   (signed apps need it), BLE-only BTDM, and the Wi-Fi and lwIP IRAM options off.
 
@@ -157,7 +162,9 @@ If the panel driver isn't part of `esp_lcd` in IDF v6.0.1 (check
 `led_strip` is. Images from Muse are sized with
 `tools/image_for_display.py --width W --height H`.
 
-A status light the existing backends don't cover (another pin or LED type)
+A single addressable LED on another pin needs only the overlay:
+`CONFIG_HOMEHUB_LED_BACKEND_DEVKIT_GPIO27=y` and `CONFIG_HOMEHUB_LED_STRIP_GPIO`
+(and `CONFIG_HOMEHUB_LED_RGB_ORDER=n` for the usual GRB order). Another LED type
 follows the same two steps. Copy `DEVKIT_GPIO27` (addressable) or `PWM_RGB`.
 
 ## 6. Boards with the full UI: add a board
@@ -204,6 +211,7 @@ The fields of `muse_board_t`:
 | `keyboard` | Dedicated navigation keys: `poll_buttons` emits `MUSE_BTN_UP/DOWN/LEFT/RIGHT/ENTER/ESCAPE` presses. Enter selects and confirms pairing; Talk is not repurposed as Select while the menu is open. Defaults to false for two-button boards. |
 | `talk_button`, `aux_button` | On-screen captions ("boot", "pwr"). `talk_hint` and `aux_hint` place them next to the physical button |
 | `frame_ms` | Avatar frame period: 40 on the S3 boards, 50 on the C6 |
+| `avatar_px` | Optional avatar canvas size in pixels; 0 uses the layout default |
 | `init` | Runs first: power latches, I2C bus, PMU |
 | `display_start` | Panel, LVGL and its task. Returns the display; leaves `*touch` NULL without touch |
 | `display_lock`, `display_unlock` | LVGL's lock |
@@ -234,7 +242,7 @@ On a classic ESP32 (see `board_m5stack_stickc_plus2.c`):
 
 - For light and status-screen boards, add a case to `tools/board.sh` with
   `TARGET`, the overlay appended to `DEFAULTS`, and the `PORTS` globs for its
-  USB. Add a line to the usage comment, and widen the `sed -n '16,26p'` range
+  USB. Add a line to the usage comment, and widen the `sed -n '16,31p'` range
   in `usage()` by the lines you added.
 - In `devices/README.md`, add a row to Supported devices, a column to
   Features, and a row to Build. Link only to reference and store pages you
