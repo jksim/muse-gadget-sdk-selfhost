@@ -17,6 +17,7 @@
 #include "host_trust.h"
 
 #include <string.h>
+#include <strings.h>
 
 #include "mbedtls/x509_crt.h"
 
@@ -68,6 +69,38 @@ const char *host_trust_check(const char *ca_pem, const char *noise_pub) {
     uint8_t key[HOST_TRUST_NOISE_KEY_BYTES];
     if (noise_pub && *noise_pub && !host_trust_decode_noise_key(noise_pub, key)) {
         return "error_invalid_noise_key";
+    }
+    return NULL;
+}
+
+bool host_trust_host_of_url(const char *url, char *out, size_t cap) {
+    if (!url || !out || cap == 0) return false;
+    const char *start = strstr(url, "://");
+    if (!start) return false;
+    start += 3;
+    const char *end;
+    if (*start == '[') {
+        start++;
+        end = strchr(start, ']');
+        if (!end) return false;
+    } else {
+        end = start + strcspn(start, ":/?#");
+    }
+    size_t len = (size_t)(end - start);
+    if (len == 0 || len >= cap) return false;
+    memcpy(out, start, len);
+    out[len] = '\0';
+    return true;
+}
+
+const char *host_trust_select(const char *ca, const char *host,
+                              const char *noise_host, const char *api_url) {
+    if (!ca || !*ca || !host || !*host) return NULL;
+    if (noise_host && *noise_host && strcasecmp(host, noise_host) == 0) return ca;
+    char api_host[256];
+    if (host_trust_host_of_url(api_url, api_host, sizeof(api_host))
+        && strcasecmp(host, api_host) == 0) {
+        return ca;
     }
     return NULL;
 }

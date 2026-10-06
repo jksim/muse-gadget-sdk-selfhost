@@ -29,8 +29,6 @@ dependencies.lock
 # Your own avatar (tools/muse/AVATAR_RECIPE.md): built when present, never committed.
 components/muse/avatar/
 
-# Self-hosted Muse CA (devices/sdkconfig.selfhost): machine-specific, never committed.
-selfhost/
 
 # Local debug artifacts (not tracked).
 *.log

@@ -160,5 +160,68 @@ class HostTrustCheckTest(unittest.TestCase):
         self.assertEqual(self.run_check("nope", "nope"), ["error_invalid_ca"])
 
 
+class HostTrustSelectTest(unittest.TestCase):
+    """Which connections use the provisioned CA: only those to the paired host."""
+
+    def test_selection(self) -> None:
+        cc = _cc()
+        harness = r"""
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+#include "host_trust.h"
+#define CA "-----BEGIN CERTIFICATE-----"
+static const char *pick(const char *ca, const char *host) {
+    return host_trust_select(ca, host, "muse-host.local", "https://muse-host.local/api");
+}
+int main(void) {
+    char h[64];
+    assert(host_trust_host_of_url("https://Muse-Host.local:443/fetch_vms", h, sizeof h));
+    assert(!strcmp(h, "Muse-Host.local"));
+    assert(host_trust_host_of_url("https://192.168.4.218/x", h, sizeof h) && !strcmp(h, "192.168.4.218"));
+    assert(host_trust_host_of_url("https://[fd00::1]:443/x", h, sizeof h) && !strcmp(h, "fd00::1"));
+    assert(host_trust_host_of_url("https://bare.example", h, sizeof h) && !strcmp(h, "bare.example"));
+    assert(!host_trust_host_of_url("not a url", h, sizeof h));
+    assert(!host_trust_host_of_url("https://", h, sizeof h));
+    assert(!host_trust_host_of_url(NULL, h, sizeof h));
+    assert(!host_trust_host_of_url("https://a-very-long-host-name.example/x", h, 8));
+
+    /* No CA provisioned: always the public bundle. */
+    assert(pick(NULL, "muse-host.local") == NULL);
+    assert(pick("", "muse-host.local") == NULL);
+    /* The paired host (Noise host or API host), any case: its CA. */
+    assert(pick(CA, "muse-host.local") != NULL);
+    assert(pick(CA, "MUSE-HOST.LOCAL") != NULL);
+    assert(host_trust_select(CA, "api.example", "noise.example", "https://api.example/v2") != NULL);
+    /* Anyone else (Muse's own servers, image hosts): the public bundle. */
+    assert(pick(CA, "api.muse.ai") == NULL);
+    assert(pick(CA, "muse-host.local.evil.example") == NULL);
+    assert(pick(CA, "") == NULL);
+    assert(pick(CA, NULL) == NULL);
+    /* A CA with no provisioned host to match is never used. */
+    assert(host_trust_select(CA, "muse-host.local", NULL, NULL) == NULL);
+    puts("ok");
+    return 0;
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "select.c"
+            src.write_text(harness)
+            binary = Path(tmp) / "select"
+            extra = shlex.split(os.environ.get("HOST_MBEDTLS_FLAGS", ""))
+            proc = subprocess.run(
+                [*cc, *extra, "-std=c11", "-Wall", "-Werror", "-I", str(COMPONENT / "include"),
+                 str(src), str(COMPONENT / "host_trust_check.c"),
+                 "-lmbedx509", "-lmbedcrypto", "-o", str(binary)],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            if proc.returncode != 0 and "mbedtls/x509_crt.h" in proc.stderr:
+                self.skipTest("mbedTLS X.509 development files not available")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            run = subprocess.run([str(binary)], text=True, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE)
+            self.assertEqual((run.returncode, run.stdout.strip()), (0, "ok"), run.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

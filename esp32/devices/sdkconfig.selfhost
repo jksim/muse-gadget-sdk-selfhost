@@ -14,10 +14,8 @@
 
 # Self-hosted Muse: talk to your own host instead of Meta's servers. Load after
 # a board's usual overlays, e.g. through MUSE_EXTRA_DEFAULTS in
-# tools/muse/board.sh. Put the host's CA certificate in selfhost/ca.pem first;
-# it is added to the default bundle (public roots stay, for public image URLs).
-CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE=y
-CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH="selfhost/ca.pem"
+# tools/muse/board.sh. Nothing host-specific is built in: the host sends its CA
+# and Noise key at pairing (components/host_trust), so one build serves any host.
 # The IP tunnel through the host isn't needed; without it the device reports
 # "connected" as soon as the control session is up.
 CONFIG_HOMEHUB_TUNNEL=n

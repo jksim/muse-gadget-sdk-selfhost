@@ -27,7 +27,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_tls.h"
-#include "esp_crt_bundle.h"
+#include "host_trust_tls.h"
 #include "esp_random.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
@@ -1831,7 +1831,7 @@ static session_result_t run_session(stack_monitor_t *stack) {
         return SESSION_FAILED;
     }
     esp_tls_cfg_t cfg = {};
-    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    host_trust_apply_tls(&cfg, s_noise_host);
     cfg.timeout_ms = 15000;
 
     int r = esp_tls_conn_new_sync(s_noise_host, static_cast<int>(strlen(s_noise_host)),

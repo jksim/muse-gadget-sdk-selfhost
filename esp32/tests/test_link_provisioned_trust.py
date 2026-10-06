@@ -86,6 +86,36 @@ class ProvisionedTrustContractTest(unittest.TestCase):
         self.assertLess(after.index('"error_storage"'), after.index("accept_pairing_credentials("))
 
 
+class HostConnectionTrustContractTest(unittest.TestCase):
+    """Connections to the paired host go through host_trust; others keep the bundle."""
+
+    HOST_SITES = {
+        "main/vm_api.c": "host_trust_apply_http(&cfg);",
+        "main/noise_control.cpp": "host_trust_apply_tls(&cfg, s_noise_host);",
+        "components/muse/muse_chat_session.cpp": "host_trust_apply_tls(&cfg, s_host);",
+    }
+    PUBLIC_SITES = (
+        "main/image_fetch.c",
+        "main/ota.c",
+        "components/muse/muse_account_api.c",  # always Muse's own api.muse.ai
+    )
+
+    def test_host_sites_use_host_trust(self) -> None:
+        for path, call in self.HOST_SITES.items():
+            with self.subTest(path=path):
+                source = (ROOT / path).read_text()
+                self.assertIn(call, source)
+                self.assertIn('#include "host_trust_tls.h"', source)
+                self.assertNotIn("crt_bundle_attach = esp_crt_bundle_attach", source)
+
+    def test_public_sites_keep_the_bundle(self) -> None:
+        for path in self.PUBLIC_SITES:
+            with self.subTest(path=path):
+                source = (ROOT / path).read_text()
+                self.assertIn("esp_crt_bundle_attach", source)
+                self.assertNotIn("host_trust_apply", source)
+
+
 class StoreHostTrustTest(unittest.TestCase):
     """Runs the real store_host_trust() against fake NVS."""
 

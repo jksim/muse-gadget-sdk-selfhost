@@ -56,6 +56,20 @@ void host_trust_reload(void);
 /* Decodes a `noise_static_pub` value; false unless it's exactly 32 bytes. */
 bool host_trust_decode_noise_key(const char *text, uint8_t out[HOST_TRUST_NOISE_KEY_BYTES]);
 
+/*
+ * The host part of "scheme://host[:port]/path" (IPv6 without brackets).
+ * False for anything else, or when it doesn't fit in `cap`.
+ */
+bool host_trust_host_of_url(const char *url, char *out, size_t cap);
+
+/*
+ * The CA a connection to `host` should trust: `ca` when one is provisioned and
+ * `host` is the paired host (`noise_host`, or the host of `api_url`), compared
+ * without case. NULL means the public bundle, for every other host.
+ */
+const char *host_trust_select(const char *ca, const char *host,
+                              const char *noise_host, const char *api_url);
+
 #ifdef __cplusplus
 }
 #endif

@@ -22,7 +22,7 @@
 #include <stdlib.h>
 
 #include "esp_http_client.h"
-#include "esp_crt_bundle.h"
+#include "host_trust_tls.h"
 #include "esp_log.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
@@ -137,9 +137,9 @@ static int http_json(const char *url, esp_http_client_method_t method,
         .buffer_size_tx = 4096,
         .event_handler = http_event_handler,
         .user_data = resp,
-        .crt_bundle_attach = esp_crt_bundle_attach,
         .disable_auto_redirect = true,
     };
+    host_trust_apply_http(&cfg);
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) return VM_API_ERR_FAILED;
 

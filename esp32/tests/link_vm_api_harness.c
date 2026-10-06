@@ -29,6 +29,14 @@
 
 void *esp_crt_bundle_attach = NULL;
 
+/* vm_api.c asks host_trust which CA its requests trust (tested in test_host_trust). */
+#include "host_trust_tls.h"
+static int s_trust_applied;
+void host_trust_apply_http(esp_http_client_config_t *cfg) {
+    (void)cfg;
+    s_trust_applied++;
+}
+
 typedef struct {
     esp_err_t err;
     int status;

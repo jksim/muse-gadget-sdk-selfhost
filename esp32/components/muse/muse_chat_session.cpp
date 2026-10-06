@@ -50,7 +50,7 @@
 #include <new>
 
 #include "esp_attr.h"
-#include "esp_crt_bundle.h"
+#include "host_trust_tls.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -816,7 +816,7 @@ static bool connect_once(char *err, size_t err_cap, int *http_status)
         return false;
     }
     esp_tls_cfg_t cfg = {};
-    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    host_trust_apply_tls(&cfg, s_host);
     cfg.timeout_ms = 15000;
     int64_t t0 = now_us();
     if (esp_tls_conn_new_sync(s_host, strlen(s_host), NOISE_PORT, &cfg, c.tls) != 1) {

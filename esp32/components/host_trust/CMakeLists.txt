@@ -17,5 +17,6 @@
 idf_component_register(
     SRCS "host_trust.c" "host_trust_check.c"
     INCLUDE_DIRS "include"
+    REQUIRES esp_http_client esp-tls
     PRIV_REQUIRES mbedtls nvs_flash freertos log
 )
