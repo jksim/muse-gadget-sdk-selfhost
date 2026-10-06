@@ -91,6 +91,8 @@ class Brain:
                     tools=toolset.specs,
                     run_tool=run_tool,
                     max_rounds=MAX_TOOL_ROUNDS,
+                    conversation=f"musehost-{conversation.id}" if conversation else None,
+                    node_id=turn.node_id,
                 ):
                     if isinstance(event, Text) and event.text:
                         if first_text is None:

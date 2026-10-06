@@ -81,4 +81,6 @@ class Provider(Protocol):
         tools: list[ToolSpec],
         run_tool: RunTool,
         max_rounds: int,
+        conversation: str | None = None,  # e.g. musehost-12, for providers that keep history
+        node_id: str | None = None,  # the gadget the turn comes from
     ) -> AsyncIterator[Event]: ...

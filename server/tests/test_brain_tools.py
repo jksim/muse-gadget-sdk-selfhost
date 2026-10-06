@@ -108,7 +108,9 @@ class ToolCallingProvider:
         self.tools_offered = None
         self.results = []
 
-    async def stream_turn(self, *, system, history, user_text, tools, run_tool, max_rounds):
+    async def stream_turn(
+        self, *, system, history, user_text, tools, run_tool, max_rounds, **_ignored
+    ):
         self.tools_offered = tools
         for call in self.calls:
             self.results.append(await run_tool(call))

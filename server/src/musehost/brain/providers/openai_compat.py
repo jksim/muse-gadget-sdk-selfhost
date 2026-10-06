@@ -40,7 +40,18 @@ class OpenAICompatProvider:
             api_key=api_key or "unused", base_url=base_url or None, max_retries=max_retries
         )
 
-    async def stream_turn(self, *, system, history, user_text, tools, run_tool, max_rounds):
+    async def stream_turn(
+        self,
+        *,
+        system,
+        history,
+        user_text,
+        tools,
+        run_tool,
+        max_rounds,
+        conversation=None,
+        node_id=None,
+    ):
         user = {"role": "user", "content": user_text}
         messages = [{"role": "system", "content": system}, *history, user]
         new_messages = [user]

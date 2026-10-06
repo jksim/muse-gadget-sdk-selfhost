@@ -53,7 +53,18 @@ class ClaudeProvider:
             api_key=api_key, base_url=base_url, max_retries=max_retries
         )
 
-    async def stream_turn(self, *, system, history, user_text, tools, run_tool, max_rounds):
+    async def stream_turn(
+        self,
+        *,
+        system,
+        history,
+        user_text,
+        tools,
+        run_tool,
+        max_rounds,
+        conversation=None,
+        node_id=None,
+    ):
         """One turn: stream text, run tool calls through ``run_tool``, repeat.
 
         Tool results for a round go back in a single user message. ``pause_turn``

@@ -23,7 +23,9 @@ class FakeProvider:
         self.error = error
         self.calls = []
 
-    async def stream_turn(self, *, system, history, user_text, tools, run_tool, max_rounds):
+    async def stream_turn(
+        self, *, system, history, user_text, tools, run_tool, max_rounds, **_ignored
+    ):
         self.calls.append(
             {"system": system, "history": list(history), "user_text": user_text, "tools": tools}
         )

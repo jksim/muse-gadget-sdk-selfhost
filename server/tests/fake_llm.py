@@ -15,10 +15,11 @@ from contextlib import contextmanager
 class Reply:
     """One scripted HTTP response: SSE events, or an error status with a JSON body."""
 
-    def __init__(self, events=None, status=200, body=None):
+    def __init__(self, events=None, status=200, body=None, delay=0.0):
         self.events = events or []
         self.status = status
         self.body = body
+        self.delay = delay  # seconds before answering, for timeouts
 
 
 @contextmanager
@@ -35,6 +36,10 @@ def fake_server(replies: list[Reply]):
             body = json.loads(self.rfile.read(length) or b"{}")
             requests.append({"path": self.path, "headers": dict(self.headers), "body": body})
             reply = queue.pop(0) if queue else Reply(status=500, body={"error": "no reply"})
+            if reply.delay:
+                import time
+
+                time.sleep(reply.delay)
             if reply.status != 200:
                 data = json.dumps(reply.body or {}).encode()
                 self.send_response(reply.status)
@@ -44,7 +49,9 @@ def fake_server(replies: list[Reply]):
                 self.wfile.write(data)
                 return
             payload = "".join(
-                (f"event: {name}\n" if name else "")
+                f": {data}\n\n"  # an SSE comment, e.g. Hermes's keepalive
+                if name == ":"
+                else (f"event: {name}\n" if name else "")
                 + f"data: {data if isinstance(data, str) else json.dumps(data)}\n\n"
                 for name, data in reply.events
             ).encode()
