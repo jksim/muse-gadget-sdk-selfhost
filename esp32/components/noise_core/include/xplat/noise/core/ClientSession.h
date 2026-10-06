@@ -75,6 +75,11 @@ class ClientSession {
 
   [[nodiscard]] bool HasOutboundWebSocketPayload() const noexcept;
 
+  // The responder's static public key, authenticated by message 2. Empty
+  // before message 2 has been read and after a failed handshake, so callers
+  // can compare it with a pinned key before sending message 3.
+  [[nodiscard]] ConstByteSpan peerStaticPublicKey() const noexcept;
+
   [[nodiscard]] StatusWithSize WriteHandshakeMessage1(
       ByteSpan websocketPayloadOut) noexcept;
 

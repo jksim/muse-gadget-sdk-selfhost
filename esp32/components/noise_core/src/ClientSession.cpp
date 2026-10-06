@@ -85,6 +85,13 @@ bool ClientSession::isEstablished() const noexcept {
   return stage_ == Stage::Established && transport_.has_value();
 }
 
+ConstByteSpan ClientSession::peerStaticPublicKey() const noexcept {
+  if (stage_ != Stage::ReadMessage2 && stage_ != Stage::Established) {
+    return ConstByteSpan();
+  }
+  return handshake_.peerStaticPublicKey();
+}
+
 bool ClientSession::HasOutboundWebSocketPayload() const noexcept {
   return framer_.HasOutboundMessage();
 }

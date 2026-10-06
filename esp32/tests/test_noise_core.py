@@ -137,5 +137,114 @@ class NoiseCoreCompileTest(unittest.TestCase):
             )
 
 
+LINUX_SRC = ROOT.parent / "linux" / "src"
+CORE_SRCS = [
+    "ClientSession.cpp",
+    "InitiatorHandshake.cpp",
+    "PsaCryptoBackend.cpp",
+    "ServiceCodec.cpp",
+    "Status.cpp",
+    "Transport.cpp",
+    "TransportFrameCodec.cpp",
+]
+
+
+class NoisePeerStaticKeyTest(unittest.TestCase):
+    """ClientSession reports the responder's static key once message 2 is read.
+
+    The responder is the SDK's Python NoiseXXResponder, the one self-hosted
+    hosts run, so this also checks the two implementations interoperate.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cxx = _cxx_command()
+        try:
+            import sys
+
+            sys.path.insert(0, str(LINUX_SRC))
+            from cryptography.hazmat.primitives.asymmetric import x25519  # noqa: F401
+            from musegadget.noise.noise_xx import NoiseXXResponder  # noqa: F401
+        except ImportError as exc:
+            raise unittest.SkipTest(f"Python Noise responder not available: {exc}")
+        cls._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(cls._tmp.name)
+        flags = _psa_crypto_flags(cxx, tmp)
+        cls.binary = tmp / "noise_peer_key_harness"
+        proc = subprocess.run(
+            [
+                *cxx,
+                "-std=c++17",
+                "-Wall",
+                "-Wextra",
+                *EMBEDDED_CXX_FLAGS,
+                "-g",
+                "-O1",
+                "-I",
+                str(COMPONENT / "include"),
+                str(ROOT / "tests" / "noise_peer_key_harness.cpp"),
+                *(str(COMPONENT / "src" / src) for src in CORE_SRCS),
+                "-pthread",
+                *flags,
+                "-o",
+                str(cls.binary),
+            ],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if proc.returncode != 0:
+            cls._tmp.cleanup()
+            raise AssertionError(proc.stdout + proc.stderr)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    def handshake(self, tamper: bool = False) -> tuple[str, str, str]:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import x25519
+        from musegadget.noise.noise_xx import NoiseXXResponder
+
+        static = x25519.X25519PrivateKey.generate()
+        expected = static.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        ).hex()
+        proc = subprocess.Popen(
+            [str(self.binary)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            kind, msg1 = proc.stdout.readline().split()
+            self.assertEqual(kind, "msg1")
+            before = proc.stdout.readline().split()
+            self.assertEqual(before[0], "before")
+            responder = NoiseXXResponder(static_private_key=static)
+            responder.initialize()
+            msg2 = bytearray(responder.read_message1_and_write_message2(bytes.fromhex(msg1)))
+            if tamper:
+                msg2[-1] ^= 0x01
+            out, _ = proc.communicate(msg2.hex() + "\n", timeout=30)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        self.assertEqual(proc.returncode, 0)
+        after = out.split()
+        self.assertEqual(after[0], "after")
+        return before[1], " ".join(after[1:]), expected
+
+    def test_peer_key_is_the_responders_static_key_after_message_2(self) -> None:
+        before, after, expected = self.handshake()
+        self.assertEqual(before, "empty")
+        self.assertEqual(after, f"ok {expected}")
+
+    def test_a_tampered_message_2_leaves_no_peer_key(self) -> None:
+        _, after, _ = self.handshake(tamper=True)
+        self.assertEqual(after, "failed empty")
+
+
 if __name__ == "__main__":
     unittest.main()
