@@ -39,9 +39,13 @@ It is an independent experiment, not a supported product.
   different Noise key. Without these fields the firmware behaves as upstream.
 - **An assistant pipeline on a Raspberry Pi 5.** Voice notes are transcribed
   locally (faster-whisper) and answered by a language model (Claude, OpenAI or
-  a local vLLM server). Replies are synthesised locally (Piper) and streamed
-  to the gadget's speaker. The model can call a small allowlist of gadget
-  commands.
+  a local vLLM server), or by a Hermes Agent (Nous Research) running on the
+  Pi. Replies are synthesised locally (Piper) and streamed to the gadget's
+  speaker. The model can call a small allowlist of gadget commands.
+- **The gadgets as MCP tools.** musehost serves the paired gadgets'
+  allowlisted commands as a Model Context Protocol server on the Pi's
+  loopback interface, behind a token. Hermes uses it to reach the gadgets;
+  any other MCP client on the Pi can too.
 - **Tooling.** `server/install.sh` sets up the host on Raspberry Pi OS.
   `musehost flash` writes a CI-built firmware release over USB, keeping the
   settings partition. `musehost pair` performs Bluetooth pairing from the Pi.
