@@ -177,17 +177,15 @@ To pair with your own host instead of Muse's servers, add
 `devices/sdkconfig.selfhost` on top of the board's overlays:
 
 ```sh
-cp /path/to/host-ca.pem selfhost/ca.pem     # gitignored; never commit it
 MUSE_EXTRA_DEFAULTS=devices/sdkconfig.selfhost tools/muse/board.sh build cores3
 MUSE_EXTRA_DEFAULTS=devices/sdkconfig.selfhost tools/muse/board.sh flash cores3
 ```
 
 `MUSE_EXTRA_DEFAULTS` appends any overlay and builds in
 `build-muse-<profile>-<name>/`, so it doesn't share an sdkconfig with the
-normal build. The overlay:
+normal build. An existing build folder keeps its sdkconfig, so delete it after
+changing the overlay. The overlay:
 
-- adds `selfhost/ca.pem` to the certificate bundle (public roots stay, so
-  public image URLs still load);
 - turns off the home-network tunnel;
 - sets `CONFIG_MUSE_TTS_PATH="/tts"`: each finished reply is posted as
   `{"text": ...}` on the chat session and the MP3 that comes back is played
@@ -195,9 +193,32 @@ normal build. The overlay:
   falls back to captions at reading pace. Empty (the default) keeps replies
   silent, as before.
 
+Nothing host-specific is built in, so one build serves every host. The host
+sends its own trust with `provision_v2`, and `components/host_trust` keeps it
+with the pairing:
+
+- `ca_cert`, the PEM of the host's CA: connections to the paired host (its
+  `noise_host`, or the host of `api_url_v2`) trust that CA instead of the
+  bundle; every other host keeps the public roots;
+- `noise_static_pub`, its Noise static key: both Noise sessions to the paired
+  host refuse a responder with any other key (`noise key mismatch`), and retry
+  later without unpairing.
+
+An unusable value fails pairing with `error_invalid_ca` or
+`error_invalid_noise_key`; without them the firmware behaves as stock.
+Unpairing clears both.
+
 Muse chat uses the host Link was provisioned with when its own isn't set, so
 pairing once with the host is enough. The host must serve the same API as
 Muse: the device API, the Noise WebSocket, and the chat streams.
+
+Releases: a `selfhost-v<version>` tag runs
+`.github/workflows/selfhost-release.yml`, which builds each listed board and
+publishes `muse-gadget-selfhost-<board>-<version>.zip`. Each zip holds the
+images and a manifest of their offsets and SHA-256 sums, made by
+`tools/muse/package_selfhost.py`. A host writes it with `musehost flash`,
+image by image, so the settings partition (NVS, between the partition table
+and otadata) survives an update.
 
 ## Flash
 
