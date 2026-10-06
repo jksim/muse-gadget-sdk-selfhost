@@ -433,3 +433,21 @@ def test_http_get_follows_github_redirects(monkeypatch):
     assert seen["ua"].startswith("musehost") and seen["timeout"] > 0
     with pytest.raises(flash.FlashError, match="https"):
         flash.http_get("file:///etc/passwd")
+
+
+def test_esptool_runs_in_an_empty_directory_not_the_callers(monkeypatch, tmp_path):
+    """esptool reads esptool.cfg from its working directory; never the caller's."""
+    import os
+
+    (tmp_path / "esptool.cfg").write_text("[esptool]\n")
+    monkeypatch.chdir(tmp_path)
+    seen = {}
+
+    def run(cmd, check, cwd):
+        seen["cmd"], seen["cwd"], seen["files"] = cmd, cwd, os.listdir(cwd)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(flash.subprocess, "run", run)
+    assert flash.run_esptool(["version"]) == 0
+    assert seen["cmd"][1:] == ["-m", "esptool", "version"]
+    assert seen["cwd"] != str(tmp_path) and seen["files"] == []

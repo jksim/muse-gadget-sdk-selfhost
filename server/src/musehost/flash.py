@@ -249,7 +249,10 @@ def run_esptool(args: list[str]) -> int:
     # Our own interpreter running esptool; the arguments are checked hex offsets,
     # temp file paths, and the port and settings from a verified manifest.
     cmd = [sys.executable, "-m", "esptool", *args]
-    return subprocess.run(cmd, check=False).returncode  # noqa: S603
+    # esptool reads esptool.cfg from its working directory: run it in an empty
+    # one, not wherever musehost was started (which may not even be readable).
+    with tempfile.TemporaryDirectory() as cwd:
+        return subprocess.run(cmd, check=False, cwd=cwd).returncode  # noqa: S603
 
 
 def write(
