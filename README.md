@@ -14,6 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
+> **Self-hosted fork.** This branch (`self-host`) adds [`server/`](server):
+> **musehost**, your own Muse host on a Raspberry Pi 5, with an assistant,
+> Clio, plus firmware that pairs with it. Start with
+> [server/README.md](server/README.md). The rest is the upstream SDK.
+
 # Muse Gadgets
 
 <p align="center">

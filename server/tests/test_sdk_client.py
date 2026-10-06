@@ -1,6 +1,6 @@
 """The gadget SDK's own client code against a running musehost.
 
-These use ``musegadget`` from ../muse-gadget-sdk-selfhost/linux (branch ``self-host``),
+These use ``musegadget`` from ../linux in this repo,
 so a response shape the SDK can't parse fails here, not on a device.
 """
 

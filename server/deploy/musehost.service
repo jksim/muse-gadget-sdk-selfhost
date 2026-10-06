@@ -8,7 +8,7 @@ Type=simple
 User=musehost
 Group=musehost
 # @BIND@ is replaced by install.sh with the Pi's LAN address.
-ExecStart=/opt/musehost/host/.venv/bin/musehost --state-dir /var/lib/musehost serve --bind @BIND@
+ExecStart=/opt/musehost/server/.venv/bin/musehost --state-dir /var/lib/musehost serve --bind @BIND@
 Restart=on-failure
 RestartSec=5
 # Speech models load from /var/lib/musehost/models only; never fetch at run time.

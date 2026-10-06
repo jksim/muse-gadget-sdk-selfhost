@@ -1,6 +1,6 @@
 """Log a gadget's USB serial output, surviving resets and re-enumeration.
 
-    python serial_watch.py PORT SECONDS OUT
+    python esp32/tools/muse/serial_watch.py PORT SECONDS OUT
 
 Each (re)open and loss of the port is marked with a wall-clock line, so
 reboots show up in the log instead of silently ending it.

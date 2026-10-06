@@ -24,3 +24,10 @@ muse-simulator.ppm
 # Local gadget provisioning and original-device flash backups.
 .sdk-token
 /backups/
+
+# Self-hosted Muse: serial logs, and specs/plans kept local, never committed
+/logs/
+/planning/
+/tasks/
+/SPEC*.md
+/CAPABILITY-MAP.md

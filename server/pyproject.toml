@@ -48,4 +48,4 @@ ignore = ["S101"]
 "tests/*" = ["S105", "S106", "S603", "S607"]  # tests compare with openssl
 
 [tool.uv.sources]
-musegadget = { path = "../muse-gadget-sdk-selfhost/linux", editable = true }
+musegadget = { path = "../linux", editable = true }

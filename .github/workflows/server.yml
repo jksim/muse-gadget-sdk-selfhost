@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Linux client
+# musehost, the self-hosted Muse server in server/.
+name: Server
 
 on:
   pull_request:
   push:
-    branches: [main, self-host]
+    branches: [self-host]
 
 permissions:
   contents: read
@@ -28,22 +29,11 @@ concurrency:
 
 jobs:
   tests:
-    name: Tests (${{ matrix.name }})
+    name: Tests and lint
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: newest
-            python: "3.x"
-            pins: ""
-          # The oldest versions the package supports (Debian 11).
-          - name: oldest
-            python: "3.9"
-            pins: "cryptography==3.3.2 websockets==13.1"
     defaults:
       run:
-        working-directory: linux
+        working-directory: server
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -51,18 +41,24 @@ jobs:
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.13"  # Raspberry Pi OS (Debian 13)
 
       - name: Install
-        env:
-          PINS: ${{ matrix.pins }}
-        run: python -m pip install pytest . $PINS
+        run: |
+          python -m pip install uv
+          uv sync --frozen
 
+      # The fast suite; `-m slow` (real Whisper and Piper models) stays local.
       - name: Run tests
-        run: python -m pytest -q
+        run: uv run pytest -q
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
 
   shellcheck:
-    name: ShellCheck install.sh
+    name: ShellCheck scripts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -70,4 +66,4 @@ jobs:
           persist-credentials: false
 
       - name: ShellCheck
-        run: shellcheck linux/install.sh
+        run: shellcheck server/install.sh server/deploy/dev-deploy.sh esp32/tools/muse/selfhost.sh

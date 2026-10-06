@@ -2,21 +2,21 @@
 # For developers: build, flash and watch the self-host gadget firmware from a
 # checkout. Everyone else uses `musehost flash` on the Pi with a released build.
 #
-#   build.sh build <board>                  e.g. cores3 (see tools/muse/board.sh)
-#   build.sh flash <board> [port]
-#   build.sh log [port] [seconds] [--reset] save serial output under logs/
+#   esp32/tools/muse/selfhost.sh build <board>      e.g. cores3 (see board.sh)
+#   esp32/tools/muse/selfhost.sh flash <board> [port]
+#   esp32/tools/muse/selfhost.sh log [port] [seconds] [--reset]   serial output, under logs/
 #
 # Nothing host-specific is built in: the host sends its CA and Noise key when
 # the gadget is paired.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-root=$(cd "$here/.." && pwd)
-fw="$root/muse-gadget-sdk-selfhost/esp32"
+fw=$(cd "$here/../.." && pwd)
+root=$(cd "$fw/.." && pwd)
 overlay=devices/sdkconfig.selfhost
 default_port=/dev/ttyACM0
 
-die() { echo "build.sh: $*" >&2; exit 1; }
+die() { echo "selfhost.sh: $*" >&2; exit 1; }
 
 idf() {
     command -v idf.py >/dev/null 2>&1 && return

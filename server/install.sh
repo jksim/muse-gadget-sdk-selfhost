@@ -2,9 +2,10 @@
 # Install or update musehost on a Raspberry Pi 5 (64-bit Raspberry Pi OS).
 # Run it on the Pi itself, after logging in:
 #
-#   curl -fsSL https://raw.githubusercontent.com/jksim/muse-selfhost-server/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/jksim/muse-gadget-sdk-selfhost/self-host/server/install.sh | sudo bash
 #
-# It downloads this repo and the SDK's Linux client from GitHub, installs uv
+# It downloads this repo (the server and the SDK's Linux client it uses) from
+# GitHub, installs uv
 # and the Python environment, creates the musehost user and /var/lib/musehost,
 # runs `musehost init` the first time only (so the CA and devices survive
 # updates), fetches the speech model and Clio's voice once, asks for an API key
@@ -13,17 +14,14 @@
 # Settings (environment variables, all optional):
 #   MUSEHOST_HOSTNAME  name in the certificate (default: this Pi's <hostname>.local)
 #   MUSEHOST_BIND      LAN address to serve on (default: the address of the default route)
-#   MUSEHOST_REPO / MUSEHOST_REF        this repo on GitHub (jksim/muse-selfhost-server, main)
-#   MUSEHOST_SDK_REPO / MUSEHOST_SDK_REF  the SDK (jksim/muse-gadget-sdk-selfhost, self-host)
+#   MUSEHOST_REPO / MUSEHOST_REF  this repo on GitHub (jksim/muse-gadget-sdk-selfhost, self-host)
 #   MUSEHOST_SOURCE    a local checkout to install from instead of GitHub
-#                      (holds host/ and muse-gadget-sdk-selfhost/linux/)
+#                      (holds server/ and linux/)
 # Pass them through sudo: curl ... | sudo MUSEHOST_HOSTNAME=clio.local bash
 set -euo pipefail
 
-repo=${MUSEHOST_REPO:-jksim/muse-selfhost-server}
-ref=${MUSEHOST_REF:-main}
-sdk_repo=${MUSEHOST_SDK_REPO:-jksim/muse-gadget-sdk-selfhost}
-sdk_ref=${MUSEHOST_SDK_REF:-self-host}
+repo=${MUSEHOST_REPO:-jksim/muse-gadget-sdk-selfhost}
+ref=${MUSEHOST_REF:-self-host}
 opt=/opt/musehost
 state=/var/lib/musehost
 
@@ -48,22 +46,19 @@ if [ ${#missing[@]} -gt 0 ]; then
     apt-get update -qq && apt-get install -y -qq "${missing[@]}"
 fi
 
-# The code: from GitHub as tarballs (no git needed), or a local checkout.
+# The code: from GitHub as a tarball (no git needed), or a local checkout.
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 if [ -n "${MUSEHOST_SOURCE:-}" ]; then
     src=$(cd "$MUSEHOST_SOURCE" && pwd)
-    sdk=$src/muse-gadget-sdk-selfhost
 else
-    say "Downloading $repo ($ref) and $sdk_repo ($sdk_ref)"
-    mkdir -p "$work/src" "$work/sdk"
+    say "Downloading $repo ($ref)"
+    mkdir -p "$work/src"
     curl -fsSL "https://github.com/$repo/archive/$ref.tar.gz" | tar -xz -C "$work/src" --strip-components=1
-    curl -fsSL "https://github.com/$sdk_repo/archive/$sdk_ref.tar.gz" | tar -xz -C "$work/sdk" --strip-components=1
     src=$work/src
-    sdk=$work/sdk
 fi
-[ -f "$src/host/pyproject.toml" ] || die "no host/ in $src"
-[ -f "$sdk/linux/pyproject.toml" ] || die "no SDK linux/ in $sdk"
+[ -f "$src/server/pyproject.toml" ] || die "no server/ in $src"
+[ -f "$src/linux/pyproject.toml" ] || die "no linux/ (the SDK's Linux client) in $src"
 
 if ! command -v uv >/dev/null; then
     say "Installing uv"
@@ -77,12 +72,13 @@ getent group dialout >/dev/null && usermod -aG dialout musehost
 install -d -m 0700 -o musehost -g musehost "$state"
 
 say "Installing the code in $opt"
-mkdir -p "$opt/muse-gadget-sdk-selfhost"
-rsync -a --delete --exclude .venv --exclude __pycache__ --exclude .pytest_cache "$src/host/" "$opt/host/"
-rsync -a --delete --exclude .venv --exclude __pycache__ "$sdk/linux/" "$opt/muse-gadget-sdk-selfhost/linux/"
-(cd "$opt/host" && UV_PYTHON_PREFERENCE=only-system uv sync --frozen --no-dev --quiet)
+mkdir -p "$opt"
+rsync -a --delete --exclude .venv --exclude __pycache__ --exclude .pytest_cache --exclude state \
+    "$src/server/" "$opt/server/"
+rsync -a --delete --exclude .venv --exclude __pycache__ "$src/linux/" "$opt/linux/"
+(cd "$opt/server" && UV_PYTHON_PREFERENCE=only-system uv sync --frozen --no-dev --quiet)
 
-run() { sudo -u musehost env HF_HOME="$state/.cache/huggingface" "$opt/host/.venv/bin/musehost" --state-dir "$state" "$@"; }
+run() { sudo -u musehost env HF_HOME="$state/.cache/huggingface" "$opt/server/.venv/bin/musehost" --state-dir "$state" "$@"; }
 
 if [ ! -f "$state/host.toml" ]; then
     say "Creating the host's CA, certificate and keys"
@@ -122,11 +118,11 @@ fi
 cat > /usr/local/bin/musehost <<WRAP
 #!/bin/sh
 # Run musehost as its service account, against the service's state.
-exec sudo -u musehost $opt/host/.venv/bin/musehost --state-dir $state "\$@"
+exec sudo -u musehost $opt/server/.venv/bin/musehost --state-dir $state "\$@"
 WRAP
 chmod 0755 /usr/local/bin/musehost
 
-sed "s/@BIND@/$bind/" "$opt/host/deploy/musehost.service" > /etc/systemd/system/musehost.service
+sed "s/@BIND@/$bind/" "$opt/server/deploy/musehost.service" > /etc/systemd/system/musehost.service
 systemctl daemon-reload
 systemctl enable --quiet musehost
 systemctl restart musehost

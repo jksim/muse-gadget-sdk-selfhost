@@ -15,10 +15,7 @@ from musegadget.pairing import PairingSession
 from musehost import pair
 
 VECTORS = json.loads(
-    (
-        Path(__file__).parents[2]
-        / "muse-gadget-sdk-selfhost/linux/tests/vectors/link_pairing_v5.json"
-    ).read_text()
+    (Path(__file__).parents[2] / "linux/tests/vectors/link_pairing_v5.json").read_text()
 )["vectors"]
 
 

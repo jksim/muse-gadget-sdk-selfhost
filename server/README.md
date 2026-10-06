@@ -1,26 +1,91 @@
-# musehost
+# musehost: a self-hosted Muse
 
-A self-hosted Muse host. Gadgets from `muse-gadget-sdk-selfhost` (branch `self-host`)
-pair with it and connect to it instead of Muse's servers. It serves:
+Your own host for Muse gadgets, instead of Meta's. A Raspberry Pi 5 runs
+`musehost`; gadgets built from this repo's ESP32 firmware (branch `self-host`),
+such as an M5Stack CoreS3, pair with it over Bluetooth and talk to it over the
+LAN. It serves:
 - the device API: enrollment, token refresh, the VM list;
 - the Noise link: commands such as `device.health`;
-- chat with Clio: speech to text (Whisper), a language model (Claude, OpenAI
-  or vLLM), and spoken replies (Piper).
+- chat with Clio, the host's assistant:
+  - she hears push-to-talk notes (Whisper, on the Pi);
+  - she answers with Claude, OpenAI or a local vLLM;
+  - she can run a few gadget commands;
+  - she speaks her replies through the gadget's speaker (Piper, on the Pi).
 
-## Installing on a Raspberry Pi
+Everything is LAN-only, with TLS from the host's own CA and a pinned Noise key.
 
-On the Pi, after logging in (see the top-level README for preparing it):
+## Setting up the Raspberry Pi 5
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/jksim/muse-selfhost-server/main/install.sh | sudo bash
-```
+No Linux machine is needed; everything below works from Windows or macOS.
 
-`install.sh`:
+You need:
+- a Raspberry Pi 5 (4 GB or more) with power supply and a 16 GB+ microSD card;
+- a network connection with internet access during the install;
+- for Clio's brain, an [Anthropic API key](https://console.anthropic.com/)
+  (or an OpenAI key or a local vLLM server; see [Clio's brain](#clios-brain)).
+
+1. **Write the OS.** In [Raspberry Pi Imager](https://www.raspberrypi.com/software/),
+   pick *Raspberry Pi 5* and *Raspberry Pi OS (64-bit)* (Lite is fine). In the
+   settings, set:
+   - a hostname such as `muse-host`; gadgets reach the Pi as `<hostname>.local`;
+   - your username and password;
+   - Wi-Fi, unless the Pi is on Ethernet;
+   - SSH on, if you'd rather log in over the network than plug in a screen.
+2. **Log in to the Pi**, either at its own screen and keyboard or from your
+   computer: `ssh <username>@muse-host.local` works in Windows PowerShell and
+   the macOS Terminal.
+3. **Install musehost:**
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/jksim/muse-gadget-sdk-selfhost/self-host/server/install.sh | sudo bash
+   ```
+
+   It takes a few minutes. It downloads the code, the speech model and Clio's
+   voice (about 600 MB in all), asks for your API key (Enter skips it), and
+   starts the service. Run the same command again later to update; the CA,
+   paired gadgets and keys are kept.
+4. **Give the Pi a fixed address**: a DHCP reservation in your router. The
+   service serves its LAN address and the certificate names it.
+
+Check it from the Pi with `musehost devices list` (empty at first) and
+`journalctl -u musehost -f`.
+
+## Setting up a gadget
+
+Supported today: the **M5Stack CoreS3**. Everything happens on the Pi.
+
+1. **Plug the gadget into one of the Pi's USB ports** with a data cable.
+2. **Flash the firmware:**
+
+   ```sh
+   musehost flash
+   ```
+
+   It downloads the latest self-host firmware release, checks it, finds the
+   gadget, says what it will write and asks first. It takes about a minute.
+   The firmware is the same for every host: nothing about your Pi is built in.
+3. **Pair it:**
+
+   ```sh
+   musehost pair --ssid "<your Wi-Fi>"
+   ```
+
+   Press the gadget's **power** button when asked. Pairing hands the gadget
+   your Wi-Fi, its tokens, and this host's address, CA certificate and Noise
+   key, so it trusts this Pi and no impostor.
+
+To update the firmware later, run `musehost flash` again; Wi-Fi and pairing
+are kept. `musehost flash --erase-settings` also clears them, for a fresh
+start.
+
+Building the firmware yourself is under [Development](#development).
+
+## What install.sh does
 - checks for 64-bit Raspberry Pi OS with Python 3.11+, and installs curl,
   tar or rsync if missing;
 - adds the `musehost` user to `bluetooth` (pairing) and `dialout` (flashing);
-- downloads this repo and the SDK's `linux/` client from GitHub as tarballs
-  (no git needed) into `/opt/musehost`;
+- downloads this repo from GitHub as a tarball (no git needed) and installs
+  `server/` and the SDK's `linux/` client it uses into `/opt/musehost`;
 - installs uv and the Python environment;
 - creates the `musehost` user with its state in `/var/lib/musehost` (0700);
 - on the first install only:
@@ -39,9 +104,8 @@ Optional settings, passed through sudo
 |---|---|
 | `MUSEHOST_HOSTNAME` | the Pi's `<hostname>.local` (the certificate's name; first install only) |
 | `MUSEHOST_BIND` | the Pi's LAN address |
-| `MUSEHOST_REPO`, `MUSEHOST_REF` | `jksim/muse-selfhost-server`, `main` |
-| `MUSEHOST_SDK_REPO`, `MUSEHOST_SDK_REF` | `jksim/muse-gadget-sdk-selfhost`, `self-host` |
-| `MUSEHOST_SOURCE` | install from a local checkout instead of GitHub |
+| `MUSEHOST_REPO`, `MUSEHOST_REF` | `jksim/muse-gadget-sdk-selfhost`, `self-host` |
+| `MUSEHOST_SOURCE` | install from a local checkout (holding `server/` and `linux/`) instead of GitHub |
 
 On the Pi, `musehost …` (in `/usr/local/bin`) runs commands as the service
 account, for example `musehost devices list`. Logs: `journalctl -u musehost -f`.
@@ -152,35 +216,34 @@ Neither transcripts nor reply text are logged.
 ## Development
 
 Needs [uv](https://docs.astral.sh/uv/) and Python 3.11+. The tests import the
-SDK from `../muse-gadget-sdk-selfhost/linux` (editable), so check out its `self-host`
-branch first.
+SDK's Linux client from `../linux` (editable).
 
 ```sh
-cd host
+cd server
 uv sync
 uv run pytest -q                      # fast suite
 uv run pytest -q -m slow              # real Whisper and Piper models (downloads once)
 uv run ruff check . && uv run ruff format --check .
 ```
 
-Gadget firmware: the SDK's `.github/workflows/selfhost-release.yml` builds
-and publishes it for a `selfhost-v<version>` tag. To build and flash it from
-a checkout instead (ESP-IDF v6.0.1 on macOS or Linux), with
-`muse-gadget-sdk-selfhost/` cloned here:
+Gadget firmware: `.github/workflows/selfhost-release.yml` builds and
+publishes it for a `selfhost-v<version>` tag. To build and flash it from a
+checkout instead (ESP-IDF v6.0.1 on macOS or Linux), from the repo root:
 
 ```sh
-esp32/build.sh build cores3 && esp32/build.sh flash cores3 /dev/ttyACM0
-esp32/build.sh log /dev/ttyACM0 60      # serial output, under logs/
+esp32/tools/muse/selfhost.sh build cores3
+esp32/tools/muse/selfhost.sh flash cores3 /dev/ttyACM0
+esp32/tools/muse/selfhost.sh log /dev/ttyACM0 60      # serial output, under logs/
 ```
 
-`muse-gadget-sdk-selfhost/esp32/tools/muse/package_selfhost.py` turns such a
+`esp32/tools/muse/package_selfhost.py` turns such a
 build into the same zip a release has, for `musehost flash --file`.
 
-To try unpushed changes on a Pi you can ssh into, `host/deploy/dev-deploy.sh
+To try unpushed changes on a Pi you can ssh into, `server/deploy/dev-deploy.sh
 [user@]host` copies this working tree there and runs `install.sh` with
 `MUSEHOST_SOURCE`.
 
-To run a host on the dev machine instead of the Pi:
+To run a host on the dev machine instead of the Pi, in `server/`:
 
 ```sh
 uv run musehost init --hostname "$(hostname).local" --ip <lan-ip>   # https on :8443

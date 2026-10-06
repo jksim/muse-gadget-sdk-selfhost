@@ -1,16 +1,6 @@
-muse-gadget-sdk-selfhost/
+# The host's state when run from a checkout (musehost init), and tool caches.
 state/
-__pycache__/
-*.pyc
-.venv/
 .pytest_cache/
 .ruff_cache/
 .coverage
 dist/
-logs/
-
-# Specs and plans stay local (planning/); root paths too, in case a tool writes them there
-planning/
-tasks/
-SPEC*.md
-CAPABILITY-MAP.md

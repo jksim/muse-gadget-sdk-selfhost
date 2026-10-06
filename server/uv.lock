@@ -994,7 +994,7 @@ wheels = [
 [[package]]
 name = "musegadget"
 version = "0.1.0"
-source = { editable = "../muse-gadget-sdk-selfhost/linux" }
+source = { editable = "../linux" }
 dependencies = [
     { name = "cryptography" },
     { name = "websockets" },
@@ -1040,7 +1040,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=42" },
     { name = "esptool", specifier = ">=5" },
     { name = "faster-whisper", specifier = ">=1.2" },
-    { name = "musegadget", editable = "../muse-gadget-sdk-selfhost/linux" },
+    { name = "musegadget", editable = "../linux" },
     { name = "openai", specifier = ">=3.24" },
     { name = "piper-tts", specifier = ">=1.8" },
     { name = "starlette", specifier = ">=0.40" },
