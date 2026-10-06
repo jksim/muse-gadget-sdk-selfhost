@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import getpass
 import ipaddress
 import json
@@ -13,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import time
+import warnings
 from pathlib import Path
 
 import uvicorn
@@ -326,11 +328,37 @@ def cmd_devices_revoke(args: argparse.Namespace, state: Path) -> int:
     return 0
 
 
+@contextlib.contextmanager
+def quiet_downloads():
+    """Keep the model hub's request logs, token hints and deprecation warnings
+    off the screen while a download runs; real failures still raise."""
+    noisy = ("httpx", "httpcore", "huggingface_hub", "filelock", "piper")
+    # huggingface_hub configures its logging lazily on first use (a handler of
+    # its own, and its level reset), which would otherwise happen inside the
+    # download and undo the quieting below. Trigger that first.
+    with contextlib.suppress(ImportError):
+        from huggingface_hub.utils import logging as hub_logging
+
+        hub_logging.get_logger()
+    levels = {name: logging.getLogger(name).level for name in noisy}
+    for name in noisy:
+        logging.getLogger(name).setLevel(logging.ERROR)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            yield
+    finally:
+        for name, level in levels.items():
+            logging.getLogger(name).setLevel(level)
+
+
 def cmd_download_model(args: argparse.Namespace, state: Path) -> int:
     name = args.name or HostConfig.load(state / CONFIG_FILE).speech_model
     if not name:
         return _fail("speech is off (speech_model is empty in host.toml)")
-    path = speech.download_model(name, state / "models")
+    print(f"Downloading speech model {name} (once; can take a few minutes)...", flush=True)
+    with quiet_downloads():
+        path = speech.download_model(name, state / "models")
     print(f"Speech model {name} is in {path}")
     return 0
 
@@ -339,7 +367,9 @@ def cmd_download_voice(args: argparse.Namespace, state: Path) -> int:
     name = args.name or HostConfig.load(state / CONFIG_FILE).tts_voice
     if not name:
         return _fail("speech output is off (tts_voice is empty in host.toml)")
-    path = voice_out.download_voice(name, state / "models")
+    print(f"Downloading voice {name} (once)...", flush=True)
+    with quiet_downloads():
+        path = voice_out.download_voice(name, state / "models")
     print(f"Voice {name} is in {path}")
     return 0
 

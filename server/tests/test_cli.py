@@ -355,3 +355,56 @@ def test_say_writes_an_mp3_and_prints_timing(state, tmp_path, capsys, monkeypatc
 def test_say_without_a_voice_explains_how_to_get_one(state, tmp_path, capsys):
     assert main(["--state-dir", str(state), "say", "Hi.", "--out", str(tmp_path / "x.mp3")]) != 0
     assert "download-voice" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command, module, attr",
+    [
+        ("download-model", "speech", "download_model"),
+        ("download-voice", "voice_out", "download_voice"),
+    ],
+)
+def test_downloads_print_one_line_not_library_chatter(
+    state, monkeypatch, capsys, caplog, command, module, attr
+):
+    import importlib
+    import logging
+    import warnings
+
+    def noisy_fetch(name, models_dir):
+        logging.getLogger("httpx").info('HTTP Request: GET https://huggingface.co/x "200 OK"')
+        logging.getLogger("huggingface_hub.utils._http").warning("unauthenticated requests")
+        logging.getLogger("piper.download_voices").info("Downloaded: x")
+        warnings.warn("`local_dir_use_symlinks` is deprecated", UserWarning, stacklevel=1)
+        return models_dir / name
+
+    monkeypatch.setattr(importlib.import_module(f"musehost.{module}"), attr, noisy_fetch)
+    caplog.set_level(logging.DEBUG)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert main(["--state-dir", str(state), command]) == 0
+    out = capsys.readouterr()
+    text = out.out + out.err + caplog.text
+    assert "huggingface.co" not in text and "unauthenticated" not in text
+    assert "Downloaded:" not in text and not caught
+    assert "Downloading" in out.out and " is in " in out.out
+
+
+def test_quiet_downloads_holds_even_after_the_hub_library_sets_its_own_level():
+    """huggingface_hub configures its own logging lazily, on first use, adding a
+    handler and resetting its level; quiet must still win. Runs in a fresh
+    interpreter so that first use really happens inside the download.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import logging\n"
+        "from musehost.cli import quiet_downloads\n"
+        "logging.basicConfig(level=logging.INFO)\n"
+        "with quiet_downloads():\n"
+        "    from huggingface_hub.utils import logging as hub_logging\n"
+        "    hub_logging.get_logger('huggingface_hub.utils._http').warning('HUB-HINT')\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert "HUB-HINT" not in out.stdout + out.stderr
