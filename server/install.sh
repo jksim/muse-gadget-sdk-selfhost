@@ -72,6 +72,8 @@ fi
 
 id musehost >/dev/null 2>&1 || useradd --system --home-dir "$state" --shell /usr/sbin/nologin musehost
 getent group bluetooth >/dev/null && usermod -aG bluetooth musehost
+# `musehost flash` writes firmware to a gadget on USB serial.
+getent group dialout >/dev/null && usermod -aG dialout musehost
 install -d -m 0700 -o musehost -g musehost "$state"
 
 say "Installing the code in $opt"
@@ -86,7 +88,7 @@ if [ ! -f "$state/host.toml" ]; then
     say "Creating the host's CA, certificate and keys"
     run init --hostname "$hostname" --ip "$bind" --port 443
 fi
-# The CA certificate is public: firmware builds need it, so keep a readable copy.
+# The CA certificate is public; keep a readable copy for checking the host (curl --cacert).
 install -m 0644 "$state/ca.pem" "$opt/ca.pem"
 
 say "Fetching the speech model and Clio's voice (first time only)"
@@ -138,7 +140,8 @@ musehost is running: https://$hostname (also https://$bind)
   Gadgets:    musehost devices list
   Pair one:   musehost pair --ssid "<your Wi-Fi>"
   Logs:       journalctl -u musehost -f
-  CA for firmware builds: $opt/ca.pem${fingerprint:+ (SHA-256 $fingerprint)}
+  Gadget:     plug it into USB, then: musehost flash
+  CA:         $opt/ca.pem${fingerprint:+ (SHA-256 $fingerprint)}
 
 Run the same command again to update; your CA, devices and keys are kept.
 DONE

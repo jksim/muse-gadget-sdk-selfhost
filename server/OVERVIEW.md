@@ -19,7 +19,7 @@ Everything is LAN-only, with TLS from the host's own CA and a pinned Noise key.
 ```
 host/               the musehost Python package, tests and Pi installer (see host/README.md)
 esp32/build.sh      fetch the host CA, build, flash and log the gadget firmware
-muse-gadget-sdk-selfhost/    the SDK checkout, branch self-host (not tracked here; clone it alongside)
+muse-gadget-sdk-selfhost/    for development: the SDK checkout, branch self-host (not tracked here)
 ```
 
 ## Setting up the Raspberry Pi 5
@@ -60,23 +60,33 @@ Check it from the Pi with `musehost devices list` (empty at first) and
 
 ## Setting up a gadget
 
-The gadget firmware (an M5Stack CoreS3, for example) is built with
-[ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/get-started/)
-v6.0.1 on the computer it's plugged into, with the host's CA compiled in. The
-CA is at `/opt/musehost/ca.pem` on the Pi, and the installer prints its
-fingerprint. `esp32/build.sh` automates this on macOS or Linux:
+Supported today: the **M5Stack CoreS3**. Everything happens on the Pi.
 
-```sh
-git clone -b self-host https://github.com/jksim/muse-gadget-sdk-selfhost.git
-esp32/build.sh fetch-ca <username>@muse-host.local
-esp32/build.sh build cores3 && esp32/build.sh flash cores3
-```
+1. **Plug the gadget into one of the Pi's USB ports** with a data cable.
+2. **Flash the firmware:**
 
-Then pair it from the Pi, and press the gadget's **power** button when asked:
+   ```sh
+   musehost flash
+   ```
 
-```sh
-musehost pair --ssid "<your Wi-Fi>"
-```
+   It downloads the latest self-host firmware release, checks it, finds the
+   gadget, says what it will write and asks first. It takes about a minute.
+   The firmware is the same for every host: nothing about your Pi is built in.
+3. **Pair it:**
+
+   ```sh
+   musehost pair --ssid "<your Wi-Fi>"
+   ```
+
+   Press the gadget's **power** button when asked. Pairing hands the gadget
+   your Wi-Fi, its tokens, and this host's address, CA certificate and Noise
+   key, so it trusts this Pi and no impostor.
+
+To update the firmware later, run `musehost flash` again; Wi-Fi and pairing
+are kept. `musehost flash --erase-settings` also clears them, for a fresh
+start.
+
+Building the firmware yourself is in `host/README.md` (Development).
 
 ## Tests
 

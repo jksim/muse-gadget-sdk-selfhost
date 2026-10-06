@@ -18,6 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/jksim/muse-selfhost-server/main/ins
 `install.sh`:
 - checks for 64-bit Raspberry Pi OS with Python 3.11+, and installs curl,
   tar or rsync if missing;
+- adds the `musehost` user to `bluetooth` (pairing) and `dialout` (flashing);
 - downloads this repo and the SDK's `linux/` client from GitHub as tarballs
   (no git needed) into `/opt/musehost`;
 - installs uv and the Python environment;
@@ -28,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/jksim/muse-selfhost-server/main/ins
 - downloads the speech model and Clio's voice once (the service never
   downloads at run time);
 - puts a readable copy of the CA certificate in `/opt/musehost/ca.pem`, for
-  firmware builds;
+  checking the host with `curl --cacert`;
 - starts `musehost.service`, which binds 443 without root.
 
 Optional settings, passed through sudo
@@ -49,19 +50,39 @@ Give the Pi a DHCP reservation, because the service binds its LAN address and
 the certificate names it. mDNS (`<hostname>.local`) over Wi-Fi can miss the
 odd lookup; the IP always works.
 
-## Pairing a gadget
+## Gadget firmware and pairing
 
-Build and flash the firmware with the host's CA (`esp32/build.sh`, see
-`muse-gadget-sdk-selfhost/esp32/AGENTS.md`, "A self-hosted Muse"). Then pair from the
-Pi over Bluetooth:
+With the gadget (an M5Stack CoreS3) on one of the Pi's USB ports:
 
 ```sh
-musehost pair --ssid "<your Wi-Fi>"    # on the Pi; asks for the Wi-Fi password
+musehost flash                          # the newest self-host firmware release
+musehost pair --ssid "<your Wi-Fi>"     # asks for the Wi-Fi password
 ```
 
 Press the gadget's **power** button (not reset) when asked. `musehost devices
 list` then shows it, and `musehost devices revoke NODE_ID` sends it back to
 pairing.
+
+`musehost flash`:
+- downloads the newest `selfhost-v*` release of `firmware_repo` (`host.toml`,
+  default `jksim/muse-gadget-sdk-selfhost`) into `/var/lib/musehost/firmware/`;
+  `--version 0.1.0` picks one, `--file FW.zip` uses a local zip;
+- checks every image against the release's manifest (SHA-256, board, and that
+  nothing touches the settings or factory data);
+- finds the gadget on USB (Espressif's vendor ID; `--port` when there are
+  several) and lets esptool confirm the chip;
+- says what it will write and asks (`--yes` skips the question), then writes
+  each image at its own offset and restarts the gadget.
+
+The gadget's settings (Wi-Fi and pairing, in its NVS partition) are kept, so
+an update needs no re-pairing. `--erase-settings` clears them too. Use it once
+for a gadget that was paired with older firmware that had the CA built in,
+and whenever you want a clean start.
+
+The firmware is the same for every host. Pairing gives it this host's address,
+CA certificate and Noise key: it trusts that CA only for this host (other
+sites keep the public roots) and refuses a host presenting a different Noise
+key.
 
 ## Commands
 
@@ -77,6 +98,7 @@ pairing.
 | `musehost chat [--device NODE_ID] [--new]` | Talk to Clio from a terminal |
 | `musehost download-model` / `transcribe FILE.wav` | Fetch the Whisper model once; transcribe a WAV |
 | `musehost download-voice [NAME]` / `say TEXT [--out F.mp3]` | Fetch the Piper voice once; speak text into an MP3 with timings |
+| `musehost flash [--board B] [--port P] [--version V \| --file F] [--erase-settings] [--yes]` | Write the self-host firmware to a gadget on USB |
 
 `--state-dir DIR` (or `$MUSEHOST_STATE_DIR`) picks another state directory.
 The service reads `host.toml` from the state directory.
@@ -140,6 +162,19 @@ uv run pytest -q                      # fast suite
 uv run pytest -q -m slow              # real Whisper and Piper models (downloads once)
 uv run ruff check . && uv run ruff format --check .
 ```
+
+Gadget firmware: the SDK's `.github/workflows/selfhost-release.yml` builds
+and publishes it for a `selfhost-v<version>` tag. To build and flash it from
+a checkout instead (ESP-IDF v6.0.1 on macOS or Linux), with
+`muse-gadget-sdk-selfhost/` cloned here:
+
+```sh
+esp32/build.sh build cores3 && esp32/build.sh flash cores3 /dev/ttyACM0
+esp32/build.sh log /dev/ttyACM0 60      # serial output, under logs/
+```
+
+`muse-gadget-sdk-selfhost/esp32/tools/muse/package_selfhost.py` turns such a
+build into the same zip a release has, for `musehost flash --file`.
 
 To try unpushed changes on a Pi you can ssh into, `host/deploy/dev-deploy.sh
 [user@]host` copies this working tree there and runs `install.sh` with
