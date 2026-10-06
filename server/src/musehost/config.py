@@ -20,6 +20,7 @@ DEFAULT_SPEECH_MODEL = "base.en"
 DEFAULT_SPEECH_TIMEOUT_S = 30.0
 DEFAULT_TTS_VOICE = "en_US-lessac-medium"
 DEFAULT_FIRMWARE_REPO = "jksim/muse-gadget-sdk-selfhost"
+DEFAULT_MCP_PORT = 8765
 DEFAULT_BRAIN_TOOLS = ("device.health", "display.draw_url", "display.show_animation")
 STATE_DIR_ENV = "MUSEHOST_STATE_DIR"
 DEFAULT_STATE_DIR = Path("state")
@@ -50,6 +51,7 @@ class HostConfig:
     brain_max_tokens: int = 4096
     tts_voice: str = DEFAULT_TTS_VOICE  # Piper voice for spoken replies; "" turns speech off
     firmware_repo: str = DEFAULT_FIRMWARE_REPO  # GitHub repo whose releases `musehost flash` uses
+    mcp_port: int = DEFAULT_MCP_PORT  # gadgets as MCP tools on 127.0.0.1; 0 turns it off
 
     @property
     def address(self) -> str:
@@ -95,6 +97,7 @@ class HostConfig:
             f"brain_max_tokens = {int(self.brain_max_tokens)}",
             f"tts_voice = {json.dumps(self.tts_voice)}",
             f"firmware_repo = {json.dumps(self.firmware_repo)}",
+            f"mcp_port = {int(self.mcp_port)}",
         ]
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -119,4 +122,5 @@ class HostConfig:
             brain_max_tokens=int(data.get("brain_max_tokens", 4096)),
             tts_voice=data.get("tts_voice", DEFAULT_TTS_VOICE),
             firmware_repo=data.get("firmware_repo", DEFAULT_FIRMWARE_REPO),
+            mcp_port=int(data.get("mcp_port", DEFAULT_MCP_PORT)),
         )

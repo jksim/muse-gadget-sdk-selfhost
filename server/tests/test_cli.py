@@ -82,6 +82,7 @@ def test_init_records_names_port_and_the_provisioned_address(tmp_path):
         "brain_max_tokens": 4096,
         "tts_voice": "en_US-lessac-medium",
         "firmware_repo": "jksim/muse-gadget-sdk-selfhost",
+        "mcp_port": 8765,
     }
 
 

@@ -13,7 +13,7 @@ from pathlib import Path
 from starlette.applications import Starlette
 from starlette.routing import WebSocketRoute
 
-from musehost import admin, api, chat, link, noise_server, pki, speech, voice_out
+from musehost import admin, api, chat, link, mcp_server, noise_server, pki, speech, voice_out
 from musehost.brain import Brain
 from musehost.brain.history import History
 from musehost.config import CONFIG_FILE, HostConfig
@@ -93,9 +93,12 @@ def create_app(state: Path, clock: Callable[[], float] = time.time) -> Starlette
         server = await admin.serve(admin.socket_path(state), app.state.hub)
         app.state.transcriber.start()  # loads the model in the background
         app.state.synthesizer.start()  # loads the voice in the background
+        mcp = await mcp_server.start(app.state.hub, app.state.config, state)
+        app.state.mcp_server = mcp[0] if mcp else None
         try:
             yield
         finally:
+            await mcp_server.stop(mcp)
             server.close()
             app.state.transcriber.close()
             app.state.synthesizer.close()
@@ -107,6 +110,7 @@ def create_app(state: Path, clock: Callable[[], float] = time.time) -> Starlette
     app.state.noise_key = pki.load_noise_key(state / "noise_static.key")
     app.state.noise_static_pub = pki.noise_public_b64(app.state.noise_key)
     app.state.hub = Hub()
+    app.state.mcp_server = None
 
     def unpair_on_revoke(node_id: str) -> None:
         # Revocations made in this process (e.g. refresh-token reuse) end the

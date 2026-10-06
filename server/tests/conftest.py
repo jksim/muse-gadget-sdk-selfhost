@@ -36,6 +36,12 @@ def state(tmp_path):
         )
         == 0
     )
+    # MCP (127.0.0.1:8765 by default) stays off unless a test turns it on.
+    import dataclasses
+
+    from musehost.config import HostConfig
+
+    dataclasses.replace(HostConfig.load(path / "host.toml"), mcp_port=0).save(path / "host.toml")
     return path
 
 

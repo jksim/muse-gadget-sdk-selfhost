@@ -13,6 +13,7 @@ dependencies = [
     "cryptography>=42",
     "esptool>=5",
     "faster-whisper>=1.2",
+    "mcp>=2.3",
     "musegadget",  # the SDK's pairing, BLE framing and Noise code
     "openai>=3.24",
     "piper-tts>=1.8",
