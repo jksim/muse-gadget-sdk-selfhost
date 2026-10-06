@@ -61,6 +61,14 @@ bool muse_link_hatch_vm(const char *want_vm, char *vm_id, size_t id_cap, char *v
            app_hatch_vm_credentials(want_vm, vm_id, id_cap, vm_name, name_cap, vm_token);
 }
 
+// Link's provisioned host, for a chat session with no host of its own.
+bool muse_link_hatch_host(char *out, size_t cap) {
+    portENTER_CRITICAL(&s_lock);
+    strlcpy(out, s_host, cap);
+    portEXIT_CRITICAL(&s_lock);
+    return out[0] != '\0';
+}
+
 bool muse_wifi_connected(void) {
     return wifi_mgr_is_connected();
 }
