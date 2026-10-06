@@ -1495,6 +1495,55 @@ static void on_chat_ack(stream_t *s)
 
 /* ---- Turn: speech ---- */
 
+/*
+ * With CONFIG_MUSE_TTS_PATH set and the speaker on, asks the host to speak
+ * message i and readies decode() for the MP3 it streams back. False: show the
+ * message silently instead.
+ */
+static bool fetch_speech(int i, msg_t &m)
+{
+#ifdef CONFIG_MUSE_TTS_PATH
+    if (!CONFIG_MUSE_TTS_PATH[0] || !s_turn.texts || !muse_settings_speaker_on()) {
+        return false;
+    }
+    cJSON *body = cJSON_CreateObject();
+    cJSON_AddStringToObject(body, "text", s_turn.texts + i * TEXT_MAX);
+    char *json = cJSON_PrintUnformatted(body);
+    cJSON_Delete(body);
+    int64_t id = json ? open_stream(K_TTS, "POST", CONFIG_MUSE_TTS_PATH, "application/json",
+                                    "audio/mpeg", json, true)
+                      : 0;
+    cJSON_free(json);
+    stream_t *s = id ? find_stream(id) : nullptr;
+    if (!s) {
+        return false;
+    }
+    s->msg = i;
+    m.pcm_frames = 0;
+    s_turn.silent = false;
+    s_turn.mp3_len = 0;
+    s_turn.mp3_ended = false;
+    s_turn.kbps = 0;
+    s_turn.down_rate = 0;
+    mp3dec_init(&s_turn.dec);
+    ESP_LOGI(TAG, "speaking message %s (%u chars)", m.id, (unsigned)m.len);
+    return true;
+#else
+    (void)i;
+    (void)m;
+    return false;
+#endif
+}
+
+/* Shows message i at reading pace, silence pacing the captions. */
+static void show_silently(int i)
+{
+    msg_t &m = s_turn.msgs[i];
+    m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
+    s_turn.silent = true;
+    ESP_LOGI(TAG, "showing message %s (%u chars)", m.id, (unsigned)m.len);
+}
+
 static void start_tts(void)
 {
     if (s_turn.tts_msg >= 0) {
@@ -1521,11 +1570,11 @@ static void start_tts(void)
          * and finishes the message once it's drained.
          */
         m.pcm_start = s_turn.pcm_out;
-        m.pcm_frames = (uint32_t)(m.len * MIC_RATE / TEXT_CHARS_PER_S);
         m.tts = TTS_ACTIVE;
         s_turn.tts_msg = i;
-        s_turn.silent = true;
-        ESP_LOGI(TAG, "showing message %s (%u chars)", m.id, (unsigned)m.len);
+        if (!fetch_speech(i, m)) {
+            show_silently(i);
+        }
         show_reply_start(m);
         return;
     }
@@ -1549,12 +1598,17 @@ static void tts_end(stream_t *s, bool ok)
     if (i < 0 || i != s_turn.tts_msg) {
         return;
     }
-    if (ok) {
-        s_turn.mp3_ended = true;   /* decode() drains the rest, then finishes */
-    } else {
-        s_turn.msgs[i].tts = TTS_FINISHED;
-        s_turn.tts_msg = -1;
+    if (s_turn.silent) {
+        return;
     }
+    if (s_turn.mp3_len == 0) {
+        /* No speech came (host error, reset, or empty): show it silently instead. */
+        ESP_LOGW(TAG, "no speech for message %d; showing it silently", i);
+        show_silently(i);
+    } else {
+        s_turn.mp3_ended = true;   /* decode() drains what came, then finishes */
+    }
+    (void)ok;
 }
 
 /* Speaker off: queues the shown message's silence while the reply buffer has room. */

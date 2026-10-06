@@ -21,3 +21,5 @@ CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH="selfhost/ca.pem"
 # The IP tunnel through the host isn't needed; without it the device reports
 # "connected" as soon as the control session is up.
 CONFIG_HOMEHUB_TUNNEL=n
+# Speak replies: the host synthesises them (POST /tts on the chat session).
+CONFIG_MUSE_TTS_PATH="/tts"

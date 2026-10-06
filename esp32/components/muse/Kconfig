@@ -129,4 +129,14 @@ menu "Muse"
             them. Needs PSRAM. Without it, voice notes go over Home Link's own
             session to its paired VM and replies are shown as text.
 
+    config MUSE_TTS_PATH
+        string "Path that speaks replies"
+        depends on MUSE_HATCH
+        default ""
+        help
+            When set, each finished reply is sent as {"text": ...} to this path
+            on the chat session, and the MP3 that comes back is played (only
+            while the speaker setting is on). Empty: replies are shown at
+            reading pace, as Muse doesn't speak gadget replies.
+
 endmenu
