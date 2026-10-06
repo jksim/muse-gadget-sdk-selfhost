@@ -14,10 +14,60 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-> **Self-hosted fork.** This branch (`self-host`) adds [`server/`](server):
-> **musehost**, your own Muse host on a Raspberry Pi 5, with an assistant,
-> Clio, plus firmware that pairs with it. Start with
-> [server/README.md](server/README.md). The rest is the upstream SDK.
+# Muse Gadgets: a self-hosted backend (experimental fork)
+
+This fork explores whether Muse gadgets can run entirely against a backend on
+the local network instead of Meta's hosted services. It adds **musehost**
+(`server/`), a reimplementation of the services the gadget firmware expects,
+and makes small changes to the ESP32 firmware so it can pair with such a host.
+It is an independent experiment, not a supported product.
+
+## What is implemented
+
+- **Device-facing protocol.** musehost serves the endpoints the firmware uses:
+  - device enrollment and token refresh;
+  - the VM list;
+  - the Noise XX session over WebSocket, carrying the link-control and chat
+    streams.
+
+  The behaviour was derived from the open-source firmware and Linux client in
+  this repository.
+- **Trust established at pairing.** Upstream firmware trusts public CAs. Here
+  the host sends its own CA certificate and Noise static key during Bluetooth
+  pairing (`components/host_trust`). The firmware then uses that CA only for
+  connections to the paired host, and rejects a responder presenting a
+  different Noise key. Without these fields the firmware behaves as upstream.
+- **An assistant pipeline on a Raspberry Pi 5.** Voice notes are transcribed
+  locally (faster-whisper) and answered by a language model (Claude, OpenAI or
+  a local vLLM server). Replies are synthesised locally (Piper) and streamed
+  to the gadget's speaker. The model can call a small allowlist of gadget
+  commands.
+- **Tooling.** `server/install.sh` sets up the host on Raspberry Pi OS.
+  `musehost flash` writes a CI-built firmware release over USB, keeping the
+  settings partition. `musehost pair` performs Bluetooth pairing from the Pi.
+
+## Status and limitations
+
+- Tested with one M5Stack CoreS3 and one Raspberry Pi 5; other boards build
+  but are untested against musehost.
+- Single owner, LAN only; no multi-user or remote access.
+- With a hosted language model, chat text leaves the local network.
+- Behaviour was inferred from the client side and may diverge from the
+  official service in ways not yet observed.
+
+## Reproducing it
+
+Setup instructions, design notes and the command reference are in
+[server/README.md](server/README.md). Firmware builds are published under
+[Releases](https://github.com/jksim/muse-gadget-sdk-selfhost/releases)
+(`selfhost-v*` tags).
+
+> Unofficial fork of
+> [facebookincubator/muse-gadget-sdk](https://github.com/facebookincubator/muse-gadget-sdk);
+> not affiliated with or endorsed by Meta. The upstream README follows
+> unchanged.
+
+---
 
 # Muse Gadgets
 
