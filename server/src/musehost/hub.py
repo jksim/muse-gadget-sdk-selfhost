@@ -71,6 +71,7 @@ class Device:
 
 class Hub:
     def __init__(self) -> None:
+        self._change_listeners: list = []
         self._devices: dict[str, Device] = {}
         self._links: dict[str, LinkConnection] = {}
         self._sessions: dict[str, set] = {}
@@ -96,12 +97,25 @@ class Hub:
             registered_at=time.time(),
         )
         log.info("%s registered (%d commands)", node_id, len(self._devices[node_id].commands))
+        self._changed()
 
     def unregister(self, node_id: str, link: LinkConnection) -> None:
         if self._links.get(node_id) is link:
             del self._links[node_id]
             self._devices[node_id].online = False
             log.info("%s went offline", node_id)
+            self._changed()
+
+    def on_change(self, callback) -> None:
+        """Call ``callback()`` whenever a gadget registers or goes offline."""
+        self._change_listeners.append(callback)
+
+    def _changed(self) -> None:
+        for callback in list(self._change_listeners):
+            try:
+                callback()
+            except Exception:
+                log.exception("hub change listener failed")
 
     def heartbeat(self, node_id: str) -> None:
         device = self._devices.get(node_id)

@@ -175,3 +175,168 @@ def test_the_token_never_appears_in_logs(state, caplog):
         run(with_client(host.url, host.token, lambda c: c.call_tool("list_gadgets", {})))
         token = host.token
     assert token not in caplog.text
+
+
+# -- T2: gadget command tools -------------------------------------------------------------
+
+
+def tools_by_name(host):
+    async def action(client):
+        return {t.name: t for t in (await client.list_tools()).tools}
+
+    return run(with_client(host.url, host.token, action))
+
+
+def call(host, name, arguments):
+    return run(with_client(host.url, host.token, lambda c: c.call_tool(name, arguments)))
+
+
+def test_one_tool_per_allowed_command_and_never_ota(state):
+    with mcp_host(state) as host:
+        register(host.hub)
+        tools = tools_by_name(host)
+    assert sorted(tools) == [
+        "device_health",
+        "display_draw_url",
+        "display_show_animation",
+        "list_gadgets",
+    ]
+    draw = tools["display_draw_url"]
+    assert draw.description == "Show an image from a URL"
+    assert set(draw.input_schema["properties"]) == {"gadget", "url", "duration_s"}
+    assert draw.input_schema["required"] == ["url"]
+    assert tools["device_health"].annotations.read_only_hint is True
+    assert not (draw.annotations and draw.annotations.read_only_hint)
+
+
+def test_a_call_runs_the_command_on_the_only_online_gadget(state):
+    with mcp_host(state) as host:
+        link = register(host.hub)
+        result = call(host, "device_health", {})
+    assert not result.is_error
+    assert json.loads(text_of(result)) == {"ok": True, "payload": {"overall": "ok"}, "error": None}
+    assert link.calls == [("device.health", {}, 5.0)]
+
+
+def test_arguments_are_checked_before_anything_is_sent(state):
+    with mcp_host(state) as host:
+        link = register(host.hub)
+        wrong_type = call(host, "display_draw_url", {"url": 42})
+        missing = call(host, "display_draw_url", {})
+        extra = call(host, "display_draw_url", {"url": "https://x/y.png", "volume": 3})
+    for result in (wrong_type, missing, extra):
+        assert result.is_error
+    assert "url" in text_of(wrong_type) and "url" in text_of(missing)
+    assert link.calls == []
+
+
+def test_a_gadget_can_be_named_and_must_be_when_several_are_online(state):
+    with mcp_host(state) as host:
+        first = register(host.hub, "homelink-111111")
+        second = register(host.hub, "homelink-222222")
+        ambiguous = call(host, "device_health", {})
+        named = call(host, "device_health", {"gadget": "homelink-222222"})
+    assert ambiguous.is_error and "homelink-111111" in text_of(ambiguous)
+    assert not named.is_error
+    assert first.calls == [] and [c[0] for c in second.calls] == ["device.health"]
+
+
+def test_offline_unknown_and_slow_gadgets_are_errors(state):
+    from musehost.hub import InvokeTimeout
+
+    with mcp_host(state) as host:
+        link = register(host.hub)
+        host.hub.unregister("homelink-abcdef", link)
+        offline = call(host, "device_health", {"gadget": "homelink-abcdef"})
+        unknown = call(host, "device_health", {"gadget": "homelink-nope00"})
+        register(host.hub, link=FakeLink({"device.health": InvokeTimeout()}))
+        slow = call(host, "device_health", {})
+        failed_link = FakeLink({"device.health": InvokeResult(ok=False, error="busy")})
+        register(host.hub, link=failed_link)
+        failed = call(host, "device_health", {})
+    assert offline.is_error and "offline" in text_of(offline)
+    assert unknown.is_error and "homelink-nope00" in text_of(unknown)
+    assert slow.is_error and "in time" in text_of(slow)
+    assert failed.is_error and "busy" in text_of(failed)
+
+
+def test_the_tool_list_follows_gadgets(state):
+    with mcp_host(state) as host:
+
+        async def scenario(client):
+            before = [t.name for t in (await client.list_tools()).tools]
+            link = register(host.hub)
+            during = [t.name for t in (await client.list_tools()).tools]
+            host.hub.unregister("homelink-abcdef", link)
+            after = [t.name for t in (await client.list_tools()).tools]
+            return before, during, after
+
+        before, during, after = run(with_client(host.url, host.token, scenario))
+    assert before == ["list_gadgets"]
+    assert "device_health" in during
+    # Offline gadgets keep their tools listed; calling them says they're offline.
+    assert "device_health" in after
+
+
+def test_current_protocol_clients_hear_of_changes_by_listening(state):
+    with mcp_host(state) as host:
+
+        async def scenario(client):
+            async with client.listen(tools_list_changed=True) as sub:
+                register(host.hub)
+                async with asyncio.timeout(5):
+                    async for event in sub:
+                        return type(event).__name__
+
+        event = run(with_client(host.url, host.token, scenario))
+    assert event == "ToolsListChanged"
+
+
+def test_older_protocol_clients_are_notified_on_their_session(state):
+    notices = []
+
+    async def on_message(message):
+        root = getattr(message, "root", message)
+        if getattr(root, "method", "") == "notifications/tools/list_changed":
+            notices.append(root)
+
+    with mcp_host(state) as host:
+
+        async def scenario():
+            headers = {"Authorization": f"Bearer {host.token}"}
+            async with httpx2.AsyncClient(headers=headers) as http:
+                transport = streamable_http_client(host.url, http_client=http)
+                async with Client(transport, mode="legacy", message_handler=on_message) as client:
+                    await client.list_tools()
+                    register(host.hub)
+                    for _ in range(100):
+                        if notices:
+                            return
+                        await asyncio.sleep(0.05)
+
+        run(scenario())
+    assert notices, "no notifications/tools/list_changed on the legacy session"
+
+
+def test_arguments_and_results_stay_out_of_the_logs(state, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    secret_url = "https://private.example/kids-photo.png"
+    with mcp_host(state) as host:
+        register(
+            host.hub,
+            link=FakeLink(
+                {
+                    "display.draw_url": InvokeResult(ok=True, payload={"shown": "SECRET-PAYLOAD"}),
+                }
+            ),
+        )
+        result = call(host, "display_draw_url", {"url": secret_url})
+    assert not result.is_error
+    # The test's own MCP client logs what it sends; musehost's side must not.
+    server_side = "\n".join(
+        r.getMessage() for r in caplog.records if not r.name.startswith(("mcp.client", "http"))
+    )
+    assert secret_url not in server_side and "SECRET-PAYLOAD" not in server_side
+    assert "display_draw_url" in caplog.text or "display.draw_url" in caplog.text
