@@ -319,6 +319,22 @@ from musehost.tokens import Tokens  # noqa: E402
 CONFIG = HostConfig(hostnames=("muse-host.local",), ips=("192.168.4.218",), port=443)
 
 
+def _host_trust() -> dict:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import x25519
+
+    from musehost import pki
+
+    _, ca = pki.create_ca()
+    return {
+        "ca_pem": ca.public_bytes(serialization.Encoding.PEM).decode(),
+        "noise_static_pub": pki.noise_public_b64(x25519.X25519PrivateKey.generate()),
+    }
+
+
+TRUST = _host_trust()
+
+
 def make_tokens(tmp_path) -> Tokens:
     return Tokens(Store.open(tmp_path / "musehost.db"))
 
@@ -335,7 +351,13 @@ def test_provisioning_sends_wifi_tokens_and_this_host(tmp_path):
         link = make_link()
         client, info = await paired(link)
         node_id = await pair.provision(
-            client, info, tokens=tokens, config=CONFIG, ssid="HomeNet", password="hunter22"
+            client,
+            info,
+            tokens=tokens,
+            config=CONFIG,
+            ssid="HomeNet",
+            password="hunter22",
+            **TRUST,
         )
         return link, node_id
 
@@ -343,6 +365,8 @@ def test_provisioning_sends_wifi_tokens_and_this_host(tmp_path):
     assert node_id == "homelink-abcdef"
     [saved] = link.saved
     assert (saved.api_url_v2, saved.noise_host) == ("https://muse-host.local", "muse-host.local")
+    # One firmware for every host: it learns the host's CA and Noise key here.
+    assert (saved.ca_cert, saved.noise_static_pub) == (TRUST["ca_pem"], TRUST["noise_static_pub"])
     assert tokens.device_for_access(saved.access_token) == "homelink-abcdef"
     assert tokens.refresh(saved.refresh_token, "homelink-abcdef") is not None
 
@@ -357,7 +381,13 @@ def test_a_failed_provision_names_the_status_and_revokes_the_tokens(tmp_path, ou
         client, info = await paired(link)
         with pytest.raises(pair.PairingFailed, match=outcome):
             await pair.provision(
-                client, info, tokens=tokens, config=CONFIG, ssid="HomeNet", password="hunter22"
+                client,
+                info,
+                tokens=tokens,
+                config=CONFIG,
+                ssid="HomeNet",
+                password="hunter22",
+                **TRUST,
             )
 
     run(scenario())
@@ -365,6 +395,33 @@ def test_a_failed_provision_names_the_status_and_revokes_the_tokens(tmp_path, ou
         "SELECT revoked_at FROM devices WHERE node_id = 'homelink-abcdef'"
     ).fetchone()
     assert row["revoked_at"] is not None
+
+
+@pytest.mark.parametrize(
+    "field, value, status",
+    [
+        ("ca_pem", "not a certificate", "error_invalid_ca"),
+        ("noise_static_pub", "too-short", "error_invalid_noise_key"),
+    ],
+)
+def test_unusable_trust_fails_pairing_and_revokes_the_tokens(tmp_path, field, value, status):
+    tokens = make_tokens(tmp_path)
+
+    async def scenario():
+        client, info = await paired(make_link())
+        with pytest.raises(pair.PairingFailed, match=status):
+            await pair.provision(
+                client,
+                info,
+                tokens=tokens,
+                config=CONFIG,
+                ssid="HomeNet",
+                password="hunter22",
+                **{**TRUST, field: value},
+            )
+
+    run(scenario())
+    assert tokens.store.devices()[0]["revoked_at"] is not None
 
 
 def test_wifi_failure_is_reported_and_revokes_the_tokens(tmp_path):
@@ -376,7 +433,13 @@ def test_wifi_failure_is_reported_and_revokes_the_tokens(tmp_path):
         client, info = await paired(link)
         with pytest.raises(pair.PairingFailed, match="wifi_failed"):
             await pair.provision(
-                client, info, tokens=tokens, config=CONFIG, ssid="HomeNet", password="hunter22"
+                client,
+                info,
+                tokens=tokens,
+                config=CONFIG,
+                ssid="HomeNet",
+                password="hunter22",
+                **TRUST,
             )
 
     run(scenario())
@@ -390,7 +453,13 @@ def test_an_empty_wifi_password_is_refused_before_anything_is_sent(tmp_path):
         client, info = await paired(make_link())
         with pytest.raises(pair.PairingFailed, match="password"):
             await pair.provision(
-                client, info, tokens=tokens, config=CONFIG, ssid="HomeNet", password=""
+                client,
+                info,
+                tokens=tokens,
+                config=CONFIG,
+                ssid="HomeNet",
+                password="",
+                **TRUST,
             )
 
     run(scenario())
@@ -407,7 +476,13 @@ def test_provisioning_logs_no_secrets(tmp_path, caplog, capsys):
         link = make_link()
         client, info = await paired(link)
         await pair.provision(
-            client, info, tokens=tokens, config=CONFIG, ssid="HomeNet", password="hunter22"
+            client,
+            info,
+            tokens=tokens,
+            config=CONFIG,
+            ssid="HomeNet",
+            password="hunter22",
+            **TRUST,
         )
         return link.saved[0]
 
@@ -415,3 +490,5 @@ def test_provisioning_logs_no_secrets(tmp_path, caplog, capsys):
     out = caplog.text + "".join(capsys.readouterr())
     for secret in ("hunter22", saved.access_token, saved.refresh_token):
         assert secret not in out
+    # Public, but long and of no use in a log.
+    assert TRUST["noise_static_pub"] not in out and "BEGIN CERTIFICATE" not in out

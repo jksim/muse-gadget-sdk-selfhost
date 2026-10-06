@@ -221,6 +221,10 @@ async def _pair(args: argparse.Namespace, state: Path) -> int:
                 config=config,
                 ssid=ssid,
                 password=password,
+                ca_pem=(state / "ca.pem").read_text(),
+                noise_static_pub=pki.noise_public_b64(
+                    pki.load_noise_key(state / "noise_static.key")
+                ),
                 display_name=args.display_name or gadget.name,
             )
     except pair.PairingFailed as exc:

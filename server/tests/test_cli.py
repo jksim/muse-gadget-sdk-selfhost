@@ -210,6 +210,7 @@ class FakeBle:
     """Stands in for ble_client.BleLink, backed by the SDK's device code."""
 
     reach_host = False
+    saved = None  # the credentials the gadget stored
 
     def __init__(self, address):
         self.address = address
@@ -222,6 +223,7 @@ class FakeBle:
 
         def provision(credentials, commit):
             original(credentials, commit)
+            FakeBle.saved = credentials
             if FakeBle.reach_host:  # as the gadget's first fetch_vms would
                 FakeBle.tokens.device_for_access(credentials.access_token)
 
@@ -263,6 +265,15 @@ def test_pair_provisions_the_only_gadget_and_waits_for_it(state, ble, capsys):
     assert "hunter22" not in out
     main(["--state-dir", str(state), "devices", "list"])
     assert "homelink-abcdef" in capsys.readouterr().out
+
+
+def test_pair_hands_the_gadget_this_hosts_ca_and_noise_key(state, ble):
+    from musehost import pki
+
+    assert main(pair_args(state)) == 0
+    assert FakeBle.saved.ca_cert == (state / "ca.pem").read_text()
+    noise_pub = pki.noise_public_b64(pki.load_noise_key(state / "noise_static.key"))
+    assert FakeBle.saved.noise_static_pub == noise_pub
 
 
 def test_pair_warns_when_the_gadget_has_not_reached_the_host_yet(state, ble, capsys):

@@ -271,10 +271,16 @@ async def provision(
     config: HostConfig,
     ssid: str,
     password: str,
+    ca_pem: str,
+    noise_static_pub: str,
     display_name: str = "",
     timeout: float = PROVISION_TIMEOUT_S,
 ) -> str:
     """Enroll a confirmed gadget and hand it Wi-Fi, tokens and this host.
+
+    "This host" is its addresses plus its CA (``ca_pem``) and Noise public key
+    (``noise_static_pub``, unpadded base64url), so one gadget firmware works
+    with any host: it trusts that CA for this host and pins that key.
 
     Returns its node id once it reports ``auth_ok``. Boards that restart after
     pairing (those with a full UI) send ``auth_ok`` once the credentials are
@@ -298,6 +304,8 @@ async def provision(
                 "token_type": "device",
                 "api_url_v2": config.api_url,
                 "noise_host": config.public_host,
+                "ca_cert": ca_pem,
+                "noise_static_pub": noise_static_pub,
             }
         )
         async with asyncio.timeout(timeout):
