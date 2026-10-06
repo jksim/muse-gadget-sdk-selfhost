@@ -15,6 +15,7 @@
  */
 
 #include "ble_server.h"
+#include "host_trust.h"
 #include "stack_monitor.h"
 
 #include <string.h>
@@ -116,8 +117,24 @@ typedef struct {
     char *api_url;
     char *api_url_v2;
     char *noise_host;
+    char *ca_cert;            /* a self-hosted Muse's CA (PEM), or NULL */
+    char *noise_static_pub;   /* its Noise static key (base64url), or NULL */
     uint32_t session_generation;
 } provision_args_t;
+
+/*
+ * A self-hosted Muse sends its CA and Noise key with provision_v2. Absent or
+ * empty means "not self-hosted". Returns the pairing status for an unusable
+ * value, or NULL.
+ */
+static const char *provision_trust_error(const cJSON *root) {
+    const cJSON *ca = cJSON_GetObjectItem(root, "ca_cert");
+    const cJSON *nk = cJSON_GetObjectItem(root, "noise_static_pub");
+    if (ca && !cJSON_IsNull(ca) && !cJSON_IsString(ca)) return "error_invalid_ca";
+    if (nk && !cJSON_IsNull(nk) && !cJSON_IsString(nk)) return "error_invalid_noise_key";
+    return host_trust_check(cJSON_IsString(ca) ? ca->valuestring : NULL,
+                            cJSON_IsString(nk) ? nk->valuestring : NULL);
+}
 
 static char *dup_str(const char *s) {
     if (!s) return NULL;
@@ -161,6 +178,8 @@ static void provision_task(void *arg) {
                           a->api_url ? a->api_url : "",
                           a->api_url_v2 ? a->api_url_v2 : "",
                           a->noise_host ? a->noise_host : "",
+                          a->ca_cert ? a->ca_cert : "",
+                          a->noise_static_pub ? a->noise_static_pub : "",
                           a->session_generation);
     }
     secure_free_str(a->ssid);
@@ -172,6 +191,8 @@ static void provision_task(void *arg) {
     secure_free_str(a->api_url);
     secure_free_str(a->api_url_v2);
     secure_free_str(a->noise_host);
+    secure_free_str(a->ca_cert);
+    secure_free_str(a->noise_static_pub);
     free(a);
     stack_monitor_record(NULL);
     vTaskDelete(NULL);
@@ -402,6 +423,7 @@ static void dispatch_command_ex(const uint8_t *data, size_t len, bool decrypted)
         cJSON *u = cJSON_GetObjectItem(root, "username");
         cJSON *tt = cJSON_GetObjectItem(root, "token_type");
         const char *ota_url = optional_ota_url(root);
+        const char *trust_error = NULL;
         if (!cJSON_IsString(s) || !cJSON_IsString(p) || !cJSON_IsString(at)
             || !s->valuestring || !p->valuestring || !at->valuestring
             || !*s->valuestring || !*p->valuestring || !*at->valuestring
@@ -409,6 +431,8 @@ static void dispatch_command_ex(const uint8_t *data, size_t len, bool decrypted)
             || !cJSON_IsString(tt) || !tt->valuestring
             || strcmp(tt->valuestring, "device") != 0) {
             ble_server_send_status("error_missing_credentials");
+        } else if ((trust_error = provision_trust_error(root)) != NULL) {
+            ble_server_send_status(trust_error);
         } else {
             provision_args_t *a = calloc(1, sizeof(*a));
             if (!a) {
@@ -453,6 +477,15 @@ static void dispatch_command_ex(const uint8_t *data, size_t len, bool decrypted)
             if (cJSON_IsString(nh) && nh->valuestring && *nh->valuestring) {
                 a->noise_host = dup_str(nh->valuestring);
             }
+            // Checked above by provision_trust_error().
+            cJSON *ca = cJSON_GetObjectItem(root, "ca_cert");
+            if (cJSON_IsString(ca) && ca->valuestring && *ca->valuestring) {
+                a->ca_cert = dup_str(ca->valuestring);
+            }
+            cJSON *nk = cJSON_GetObjectItem(root, "noise_static_pub");
+            if (cJSON_IsString(nk) && nk->valuestring && *nk->valuestring) {
+                a->noise_static_pub = dup_str(nk->valuestring);
+            }
             // 8 KB stack — mbedtls 3.6 (IDF v6) needs significantly more
             // stack during TLS handshake than v5's 3.x (~2 KB more peak).
             a->session_generation = link_pairing_mark_provisioning_active();
@@ -468,6 +501,8 @@ static void dispatch_command_ex(const uint8_t *data, size_t len, bool decrypted)
                 secure_free_str(a->api_url);
                 secure_free_str(a->api_url_v2);
                 secure_free_str(a->noise_host);
+                secure_free_str(a->ca_cert);
+                secure_free_str(a->noise_static_pub);
                 free(a);
                 ble_server_send_pairing_status("error_operation_in_progress", generation);
                 ble_server_disconnect_pairing_session(generation);

@@ -409,6 +409,9 @@ static void test_clear_setup_forgets_networks(void) {
     CHECK(fake_get("device_state") != NULL, "device keys kept");
 }
 
+/* config_store.c reloads a self-hosted Muse's trust after clearing. */
+void host_trust_reload(void) {}
+
 int main(void) {
     wifi_known_init();
     test_empty_and_round_trip();

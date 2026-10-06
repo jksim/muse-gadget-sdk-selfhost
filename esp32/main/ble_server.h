@@ -28,6 +28,8 @@ typedef void (*ble_provision_cb)(const char *ssid, const char *password,
                                  const char *api_url,
                                  const char *api_url_v2,
                                  const char *noise_host,
+                                 const char *ca_cert,
+                                 const char *noise_static_pub,
                                  uint32_t session_generation);
 typedef void (*ble_ota_cb)(const char *url, bool force);
 typedef void (*ble_simple_cb)(void);

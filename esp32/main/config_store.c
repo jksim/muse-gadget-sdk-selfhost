@@ -15,6 +15,7 @@
  */
 
 #include "config_store.h"
+#include "host_trust.h"
 
 #include <string.h>
 
@@ -156,13 +157,17 @@ bool config_clear_pairing(void) {
         "api_url",
         "api_url_v2",
         "noise_host",
+        "host_ca",
+        "noise_pub",
         "access_token",
         "refresh_token",
         "auth_token",
         "vm_url",
         "username",
     };
-    return clear_and_verify(keys, sizeof(keys) / sizeof(keys[0]));
+    bool cleared = clear_and_verify(keys, sizeof(keys) / sizeof(keys[0]));
+    host_trust_reload();  // the CA and Noise pin go with the pairing
+    return cleared;
 }
 
 bool config_clear_setup(void) {
@@ -170,6 +175,8 @@ bool config_clear_setup(void) {
         "api_url",
         "api_url_v2",
         "noise_host",
+        "host_ca",
+        "noise_pub",
         "access_token",
         "refresh_token",
         "auth_token",
@@ -182,7 +189,9 @@ bool config_clear_setup(void) {
         "wifi_hidden",
         "setup_complete",
     };
-    return clear_and_verify(keys, sizeof(keys) / sizeof(keys[0]));
+    bool cleared = clear_and_verify(keys, sizeof(keys) / sizeof(keys[0]));
+    host_trust_reload();  // the CA and Noise pin go with the pairing
+    return cleared;
 }
 
 bool config_is_provisioned(void) {

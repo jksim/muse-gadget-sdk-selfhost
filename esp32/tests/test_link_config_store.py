@@ -46,6 +46,8 @@ class LinkConfigStoreHarnessTest(unittest.TestCase):
                     str(ROOT / "tests" / "link_fakes"),
                     "-I",
                     str(ROOT / "main"),
+                    "-I",
+                    str(ROOT / "components" / "host_trust" / "include"),
                     str(ROOT / "tests" / "link_config_store_harness.c"),
                     str(ROOT / "main" / "config_store.c"),
                     "-o",

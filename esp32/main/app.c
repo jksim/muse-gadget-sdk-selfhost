@@ -43,6 +43,7 @@
 #include "lwip/ip4_addr.h"
 
 #include "identity.h"
+#include "host_trust.h"
 #include "config_store.h"
 #include "wifi_mgr.h"
 #include "wifi_known.h"
@@ -1136,6 +1137,21 @@ static bool start_wifi_join_ota_if_requested(const char *url, bool force,
     return true;
 }
 
+/*
+ * A self-hosted Muse's CA and Noise key, already checked by ble_server.
+ * Stored, or erased when absent so a re-pair with a stock host drops them,
+ * then loaded for the connections that use them.
+ */
+static bool store_host_trust(const char *ca_cert, const char *noise_static_pub) {
+    bool ca_saved = ca_cert && *ca_cert
+        ? config_set_str(HOST_TRUST_CA_KEY, ca_cert) : config_erase_key(HOST_TRUST_CA_KEY);
+    bool key_saved = noise_static_pub && *noise_static_pub
+        ? config_set_str(HOST_TRUST_NOISE_KEY, noise_static_pub)
+        : config_erase_key(HOST_TRUST_NOISE_KEY);
+    host_trust_reload();
+    return ca_saved && key_saved;
+}
+
 static void on_provision(const char *ssid, const char *password,
                          const char *access_token,
                          const char *refresh_token,
@@ -1145,6 +1161,8 @@ static void on_provision(const char *ssid, const char *password,
                          const char *api_url,
                          const char *api_url_v2,
                          const char *noise_host,
+                         const char *ca_cert,
+                         const char *noise_static_pub,
                          uint32_t session_generation) {
     if (session_generation == 0) return;
     if (!operation_gate_take(0, "BLE provision")) {
@@ -1191,6 +1209,11 @@ static void on_provision(const char *ssid, const char *password,
     noise_ctrl_set_host(noise_host);
 
     if (!require_provisioning_pairing_session(session_generation)) goto done;
+    // Before the first call to the host, so it already trusts the host's CA.
+    if (!store_host_trust(ca_cert, noise_static_pub)) {
+        setup_fail_for_session("storage", "error_storage", session_generation);
+        goto done;
+    }
     setup_stage_set("auth");
     if (!accept_pairing_credentials(access_token, refresh_token, username)) {
         setup_fail_for_session("auth", "auth_failed", session_generation);
@@ -2470,6 +2493,7 @@ void app_run(void) {
     }
 
     config_store_init();
+    host_trust_reload();  // a self-hosted Muse's CA and Noise key, if paired with one
     wifi_known_init();
 
     identity_init();

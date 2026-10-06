@@ -220,6 +220,7 @@ static void test_setup_clear_verifies_credentials_and_preserves_identity(void) {
         "access_token", "refresh_token", "auth_token", "vm_url", "username",
         "ssid", "password", "wifi_channel",
         "setup_complete", "api_url", "api_url_v2", "noise_host",
+        "host_ca", "noise_pub",
     };
     fake_reset();
     for (size_t i = 0; i < sizeof(setup_keys) / sizeof(setup_keys[0]); i++) {
@@ -285,6 +286,9 @@ static void test_reset_clears_endpoints_before_credentials(void) {
         CHECK(resetters[i](), "reset should succeed");
     }
 }
+
+/* config_store.c reloads a self-hosted Muse's trust after clearing. */
+void host_trust_reload(void) {}
 
 int main(void) {
     test_lookup_is_tri_state();

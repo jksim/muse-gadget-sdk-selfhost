@@ -56,6 +56,8 @@ class LinkWifiKnownHarnessTest(unittest.TestCase):
                     str(ROOT / "tests" / "link_fakes"),
                     "-I",
                     str(ROOT / "main"),
+                    "-I",
+                    str(ROOT / "components" / "host_trust" / "include"),
                     str(ROOT / "tests" / "link_wifi_known_harness.c"),
                     str(ROOT / "main" / "wifi_known.c"),
                     str(ROOT / "main" / "config_store.c"),

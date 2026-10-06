@@ -50,6 +50,7 @@ set(GADGET_REQUIRES
     esp_app_format
     esp-tls
     noise_core
+    host_trust
     product_info
     bt
     driver

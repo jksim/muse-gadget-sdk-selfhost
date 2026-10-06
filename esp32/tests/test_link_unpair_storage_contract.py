@@ -322,6 +322,9 @@ int main(void) {
             self.assertIn('"api_url"', body, f"{label} must clear api_url")
             self.assertIn('"api_url_v2"', body, f"{label} must clear api_url_v2")
             self.assertIn('"noise_host"', body, f"{label} must clear noise_host")
+            # A self-hosted Muse's trust goes with its pairing.
+            self.assertIn('"host_ca"', body, f"{label} must clear host_ca")
+            self.assertIn('"noise_pub"', body, f"{label} must clear noise_pub")
 
 
 if __name__ == "__main__":
