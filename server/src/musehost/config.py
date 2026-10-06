@@ -19,6 +19,7 @@ DEFAULT_AGENT_NAME = "Clio"
 DEFAULT_SPEECH_MODEL = "base.en"
 DEFAULT_SPEECH_TIMEOUT_S = 30.0
 DEFAULT_TTS_VOICE = "en_US-lessac-medium"
+DEFAULT_FIRMWARE_REPO = "jksim/muse-gadget-sdk-selfhost"
 DEFAULT_BRAIN_TOOLS = ("device.health", "display.draw_url", "display.show_animation")
 STATE_DIR_ENV = "MUSEHOST_STATE_DIR"
 DEFAULT_STATE_DIR = Path("state")
@@ -48,6 +49,7 @@ class HostConfig:
     brain_idle_minutes: int = 30
     brain_max_tokens: int = 4096
     tts_voice: str = DEFAULT_TTS_VOICE  # Piper voice for spoken replies; "" turns speech off
+    firmware_repo: str = DEFAULT_FIRMWARE_REPO  # GitHub repo whose releases `musehost flash` uses
 
     @property
     def address(self) -> str:
@@ -92,6 +94,7 @@ class HostConfig:
             f"brain_idle_minutes = {int(self.brain_idle_minutes)}",
             f"brain_max_tokens = {int(self.brain_max_tokens)}",
             f"tts_voice = {json.dumps(self.tts_voice)}",
+            f"firmware_repo = {json.dumps(self.firmware_repo)}",
         ]
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -115,4 +118,5 @@ class HostConfig:
             brain_idle_minutes=int(data.get("brain_idle_minutes", 30)),
             brain_max_tokens=int(data.get("brain_max_tokens", 4096)),
             tts_voice=data.get("tts_voice", DEFAULT_TTS_VOICE),
+            firmware_repo=data.get("firmware_repo", DEFAULT_FIRMWARE_REPO),
         )

@@ -11,6 +11,7 @@ dependencies = [
     "anthropic>=1.11",
     "bleak>=0.22",
     "cryptography>=42",
+    "esptool>=5",
     "faster-whisper>=1.2",
     "musegadget",  # the SDK's pairing, BLE framing and Noise code
     "openai>=3.24",

@@ -19,7 +19,7 @@ import uvicorn
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 
-from musehost import admin, ble_client, pair, pki, provisioning, speech, voice_out
+from musehost import admin, ble_client, flash, pair, pki, provisioning, speech, voice_out
 from musehost.app import DB_FILE, create_app
 from musehost.config import CONFIG_FILE, HostConfig, state_dir
 from musehost.store import Store
@@ -372,6 +372,55 @@ def cmd_say(args: argparse.Namespace, state: Path) -> int:
     return 0
 
 
+def cmd_flash(args: argparse.Namespace, state: Path) -> int:
+    """Write the self-host firmware to a gadget on this machine's USB."""
+    config = HostConfig.load(state / CONFIG_FILE)
+    try:
+        if args.file:
+            path = Path(args.file)
+        else:
+            print(f"Looking for {args.board} firmware in {config.firmware_repo} releases...")
+            path = flash.fetch_release(
+                config.firmware_repo,
+                board=args.board,
+                version=args.version,
+                cache=state / "firmware",
+                fetch=flash.http_get,
+            )
+        fw = flash.load_firmware(path, board=args.board)
+        port = flash.find_port(args.port, list_ports=flash.serial_ports)
+    except flash.FlashError as exc:
+        return _fail(str(exc))
+    except OSError as exc:  # network trouble, or an unreadable file
+        return _fail(f"couldn't get the firmware: {exc}")
+
+    print(f"Firmware: {fw.board} {fw.version} ({fw.chip})")
+    print(f"Gadget:   {port}")
+    if args.erase_settings:
+        print("Settings: will be ERASED (Wi-Fi and pairing); pair the gadget again afterwards")
+    else:
+        print("Settings: kept (Wi-Fi and pairing stay)")
+    if not args.yes:
+        try:
+            answer = input("Write it? [y/N] ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            return _fail("cancelled; nothing was written")
+
+    started = time.monotonic()
+    try:
+        flash.write(fw, port, erase_settings=args.erase_settings, esptool=flash.run_esptool)
+    except flash.FlashError as exc:
+        return _fail(str(exc))
+    print(f"Flashed {fw.board} {fw.version} in {time.monotonic() - started:.0f} s.")
+    if args.erase_settings:
+        print("It starts in setup mode: run `musehost pair` next.")
+    else:
+        print("A paired gadget reconnects by itself; a new one waits for `musehost pair`.")
+    return 0
+
+
 def cmd_transcribe(args: argparse.Namespace, state: Path) -> int:
     """Transcribe one WAV with the configured model; for checking speech by hand."""
     engine = speech.engine_for(HostConfig.load(state / CONFIG_FILE), state / "models")
@@ -487,6 +536,18 @@ def build_parser() -> argparse.ArgumentParser:
     say.add_argument("text")
     say.add_argument("--out", default="say.mp3")
     say.set_defaults(func=cmd_say)
+
+    flash_cmd = sub.add_parser("flash", help="write the self-host firmware to a gadget on USB")
+    flash_cmd.add_argument("--board", default="cores3", help="board name (default cores3)")
+    flash_cmd.add_argument("--port", help="serial port (default: the one Espressif gadget)")
+    source = flash_cmd.add_mutually_exclusive_group()
+    source.add_argument("--version", help="release version, e.g. 0.1.0 (default: newest)")
+    source.add_argument("--file", help="a local firmware zip instead of a release")
+    flash_cmd.add_argument(
+        "--erase-settings", action="store_true", help="also clear the gadget's Wi-Fi and pairing"
+    )
+    flash_cmd.add_argument("--yes", action="store_true", help="don't ask before writing")
+    flash_cmd.set_defaults(func=cmd_flash)
 
     transcribe = sub.add_parser("transcribe", help="transcribe a WAV with the speech model")
     transcribe.add_argument("file")
