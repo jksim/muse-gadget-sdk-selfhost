@@ -21,7 +21,17 @@ import uvicorn
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 
-from musehost import admin, ble_client, flash, pair, pki, provisioning, speech, voice_out
+from musehost import (
+    admin,
+    ble_client,
+    flash,
+    mcp_server,
+    pair,
+    pki,
+    provisioning,
+    speech,
+    voice_out,
+)
 from musehost.app import DB_FILE, create_app
 from musehost.config import CONFIG_FILE, HostConfig, state_dir
 from musehost.store import Store
@@ -452,6 +462,29 @@ def cmd_flash(args: argparse.Namespace, state: Path) -> int:
     return 0
 
 
+def cmd_mcp_config(args: argparse.Namespace, state: Path) -> int:
+    """Print the block that connects Hermes Agent (or another MCP client) to the gadgets."""
+    config = HostConfig.load(state / CONFIG_FILE)
+    if not config.mcp_port:
+        return _fail("MCP is off (mcp_port = 0 in host.toml)")
+    if args.rotate:
+        token = mcp_server.rotate_token(state)
+        print("# New token: the old one stopped working. Update every client that used it.")
+    else:
+        token = mcp_server.load_token(state)
+    print(
+        "# Add to ~/.hermes/config.yaml (merge into an existing mcp_servers block):\n"
+        "mcp_servers:\n"
+        "  musehost:\n"
+        f"    url: http://127.0.0.1:{config.mcp_port}{mcp_server.PATH}\n"
+        "    headers:\n"
+        f'      Authorization: "Bearer {token}"\n'
+        "    trust: full  # musehost's own server; it offers only the brain_tools commands\n"
+        "    timeout: 60"
+    )
+    return 0
+
+
 def cmd_transcribe(args: argparse.Namespace, state: Path) -> int:
     """Transcribe one WAV with the configured model; for checking speech by hand."""
     engine = speech.engine_for(HostConfig.load(state / CONFIG_FILE), state / "models")
@@ -579,6 +612,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     flash_cmd.add_argument("--yes", action="store_true", help="don't ask before writing")
     flash_cmd.set_defaults(func=cmd_flash)
+
+    mcp_config = sub.add_parser(
+        "mcp-config", help="print the block that lets Hermes Agent use the gadgets over MCP"
+    )
+    mcp_config.add_argument("--rotate", action="store_true", help="replace the MCP token first")
+    mcp_config.set_defaults(func=cmd_mcp_config)
 
     transcribe = sub.add_parser("transcribe", help="transcribe a WAV with the speech model")
     transcribe.add_argument("file")

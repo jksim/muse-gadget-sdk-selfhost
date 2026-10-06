@@ -340,3 +340,44 @@ def test_arguments_and_results_stay_out_of_the_logs(state, caplog):
     )
     assert secret_url not in server_side and "SECRET-PAYLOAD" not in server_side
     assert "display_draw_url" in caplog.text or "display.draw_url" in caplog.text
+
+
+# -- T3: musehost mcp-config ----------------------------------------------------------------
+
+
+def test_mcp_config_prints_a_hermes_block_with_this_hosts_url_and_token(state, capsys):
+    import yaml
+
+    from musehost.cli import main
+
+    set_config(state, mcp_port=8799)
+    assert main(["--state-dir", str(state), "mcp-config"]) == 0
+    block = yaml.safe_load(capsys.readouterr().out)
+    server = block["mcp_servers"]["musehost"]
+    token = (state / "mcp.token").read_text().strip()
+    assert server["url"] == "http://127.0.0.1:8799/mcp"
+    assert server["headers"] == {"Authorization": f"Bearer {token}"}
+    assert server["trust"] == "full"
+
+
+def test_rotating_the_token_cuts_off_the_old_one_at_once(state, capsys):
+    from musehost.cli import main
+
+    with mcp_host(state) as host:
+        old = host.token
+        assert main(["--state-dir", str(state), "mcp-config", "--rotate"]) == 0
+        new = (state / "mcp.token").read_text().strip()
+        old_status = httpx2.post(
+            host.url, json={}, headers={"Authorization": f"Bearer {old}"}, timeout=5
+        ).status_code
+        listed = run(with_client(host.url, new, lambda c: c.list_tools()))
+    assert new != old and new in capsys.readouterr().out
+    assert old_status == 401 and listed.tools
+
+
+def test_mcp_config_says_when_mcp_is_off(state, capsys):
+    from musehost.cli import main
+
+    set_config(state, mcp_port=0)
+    assert main(["--state-dir", str(state), "mcp-config"]) != 0
+    assert "mcp_port" in capsys.readouterr().err

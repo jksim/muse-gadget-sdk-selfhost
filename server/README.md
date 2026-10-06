@@ -165,6 +165,7 @@ key.
 | `musehost download-model` / `transcribe FILE.wav` | Fetch the Whisper model once; transcribe a WAV |
 | `musehost download-voice [NAME]` / `say TEXT [--out F.mp3]` | Fetch the Piper voice once; speak text into an MP3 with timings |
 | `musehost flash [--board B] [--port P] [--version V \| --file F] [--erase-settings] [--yes]` | Write the self-host firmware to a gadget on USB |
+| `musehost mcp-config [--rotate]` | Print the block that lets Hermes Agent (or another MCP client) use the gadgets; `--rotate` replaces the token |
 
 `--state-dir DIR` (or `$MUSEHOST_STATE_DIR`) picks another state directory.
 The service reads `host.toml` from the state directory.
@@ -199,6 +200,29 @@ Tools and conversations:
 - Conversations are kept per gadget for 30 idle minutes
   (`brain_idle_minutes`), then start fresh.
 - With Claude or OpenAI, the conversation leaves the LAN.
+
+## Gadgets over MCP
+
+musehost also serves the paired gadgets as **MCP tools** (Model Context
+Protocol), so an agent running on the Pi, such as Hermes Agent, can use them.
+For example, it can check a gadget's health or put a picture on its screen
+from a Telegram chat.
+
+- **Where:** `http://127.0.0.1:8765/mcp`, on the Pi only (`mcp_port` in
+  `host.toml`; `0` turns it off). Requests need the token in
+  `/var/lib/musehost/mcp.token`.
+- **Tools:** `list_gadgets`, plus one tool per command in `brain_tools`
+  (`device_health`, `display_draw_url`, `display_show_animation`), each taking
+  a `gadget` node id; it can be left out when only one gadget is online.
+  `device.ota` is never offered, and nothing can pair, unpair or revoke.
+- **Logs:** arguments and results are never logged.
+
+To connect a client, print its configuration block on the Pi:
+
+```sh
+musehost mcp-config            # paste into ~/.hermes/config.yaml
+musehost mcp-config --rotate   # new token; the old one stops working at once
+```
 
 ## Speech
 
