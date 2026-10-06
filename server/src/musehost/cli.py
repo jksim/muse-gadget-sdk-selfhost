@@ -408,6 +408,7 @@ def cmd_flash(args: argparse.Namespace, state: Path) -> int:
         if answer.strip().lower() not in ("y", "yes"):
             return _fail("cancelled; nothing was written")
 
+    sys.stdout.flush()  # our summary before esptool's output, even when piped
     started = time.monotonic()
     try:
         flash.write(fw, port, erase_settings=args.erase_settings, esptool=flash.run_esptool)
