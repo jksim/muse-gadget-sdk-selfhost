@@ -37,7 +37,7 @@ static SemaphoreHandle_t s_lock;
  */
 static char *s_ca_buf;
 static bool s_has_ca;
-static char s_noise_host[128];
+static char s_noise_host[256]; /* as main/noise_control.cpp */
 static char s_api_url[256];
 static bool s_has_key;
 static uint8_t s_key[HOST_TRUST_NOISE_KEY_BYTES];
