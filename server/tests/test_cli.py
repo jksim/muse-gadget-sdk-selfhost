@@ -80,6 +80,7 @@ def test_init_records_names_port_and_the_provisioned_address(tmp_path):
         "brain_tools": ["device.health", "display.draw_url", "display.show_animation"],
         "brain_idle_minutes": 30,
         "brain_max_tokens": 4096,
+        "brain_timeout_s": 120.0,
         "tts_voice": "en_US-lessac-medium",
         "firmware_repo": "jksim/muse-gadget-sdk-selfhost",
         "mcp_port": 8765,

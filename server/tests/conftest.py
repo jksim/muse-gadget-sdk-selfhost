@@ -112,5 +112,11 @@ def short_admin_socket(monkeypatch):
 @pytest.fixture(autouse=True)
 def no_real_llm_keys(monkeypatch):
     """Tests never reach a real model: clear provider keys (tests set fakes as needed)."""
-    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "VLLM_API_KEY"):
+    for name in (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "OPENAI_API_KEY",
+        "VLLM_API_KEY",
+        "HERMES_API_KEY",
+    ):
         monkeypatch.delenv(name, raising=False)

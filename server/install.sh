@@ -110,6 +110,7 @@ if [ ! -f "$state/brain.env" ]; then
         if [ -n "$key" ]; then printf 'ANTHROPIC_API_KEY=%s\n' "$key"; else echo '# ANTHROPIC_API_KEY='; fi
         echo '# OPENAI_API_KEY='
         echo '# VLLM_API_KEY='
+        echo '# HERMES_API_KEY='
     } > "$state/brain.env"
     if [ -n "$key" ]; then
         echo "Saved the key to $state/brain.env."

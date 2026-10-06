@@ -49,6 +49,7 @@ class HostConfig:
     brain_tools: tuple[str, ...] = DEFAULT_BRAIN_TOOLS  # commands Clio may run
     brain_idle_minutes: int = 30
     brain_max_tokens: int = 4096
+    brain_timeout_s: float = 120.0  # longest a turn may take (Hermes tool runs can be long)
     tts_voice: str = DEFAULT_TTS_VOICE  # Piper voice for spoken replies; "" turns speech off
     firmware_repo: str = DEFAULT_FIRMWARE_REPO  # GitHub repo whose releases `musehost flash` uses
     mcp_port: int = DEFAULT_MCP_PORT  # gadgets as MCP tools on 127.0.0.1; 0 turns it off
@@ -95,6 +96,7 @@ class HostConfig:
             f"brain_tools = {json.dumps(list(self.brain_tools))}",
             f"brain_idle_minutes = {int(self.brain_idle_minutes)}",
             f"brain_max_tokens = {int(self.brain_max_tokens)}",
+            f"brain_timeout_s = {float(self.brain_timeout_s)}",
             f"tts_voice = {json.dumps(self.tts_voice)}",
             f"firmware_repo = {json.dumps(self.firmware_repo)}",
             f"mcp_port = {int(self.mcp_port)}",
@@ -120,6 +122,7 @@ class HostConfig:
             brain_tools=tuple(data.get("brain_tools", DEFAULT_BRAIN_TOOLS)),
             brain_idle_minutes=int(data.get("brain_idle_minutes", 30)),
             brain_max_tokens=int(data.get("brain_max_tokens", 4096)),
+            brain_timeout_s=float(data.get("brain_timeout_s", 120.0)),
             tts_voice=data.get("tts_voice", DEFAULT_TTS_VOICE),
             firmware_repo=data.get("firmware_repo", DEFAULT_FIRMWARE_REPO),
             mcp_port=int(data.get("mcp_port", DEFAULT_MCP_PORT)),

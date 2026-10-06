@@ -74,11 +74,30 @@ def build_brain(config: HostConfig, hub: Hub, store: Store | None) -> Brain | No
             base_url=config.brain_base_url or None,
             max_tokens=config.brain_max_tokens,
         )
+    elif provider_name == "hermes":
+        from musehost.brain.providers import hermes
+
+        key = os.environ.get("HERMES_API_KEY")
+        if not key:
+            log.warning(
+                "brain: hermes needs HERMES_API_KEY (Hermes's API_SERVER_KEY); "
+                "Clio uses the placeholder"
+            )
+            return None
+        provider = hermes.HermesProvider(
+            api_key=key,
+            base_url=config.brain_base_url or hermes.DEFAULT_BASE_URL,
+            model=config.brain_model or hermes.DEFAULT_MODEL,
+            timeout_s=config.brain_timeout_s,
+        )
     else:
         log.warning("brain: unknown provider %r; Clio uses the placeholder", provider_name)
         return None
     history = History(store, idle_minutes=config.brain_idle_minutes) if store else None
-    log.info("brain: %s with %s", provider.name, provider.model)
+    if provider.name == "hermes":
+        log.info("brain: hermes at %s (%s)", provider.base_url, provider.model)
+    else:
+        log.info("brain: %s with %s", provider.name, provider.model)
     return Brain(hub, provider, config, history=history)
 
 

@@ -212,3 +212,76 @@ def test_the_brain_names_the_conversation_and_the_gadget(tmp_path):
     assert names[0] == names[1] and names[0].startswith("musehost-")
     assert names[2] != names[0]
     assert all('gadget="homelink-4d6734"' in r["body"]["instructions"] for r in requests)
+
+
+# -- wiring -----------------------------------------------------------------------------------
+
+
+def test_hermes_with_a_key_is_clios_brain_with_the_defaults(monkeypatch, caplog):
+    import dataclasses
+    import logging
+
+    from test_brain import CONFIG
+
+    from musehost.app import build_brain
+    from musehost.hub import Hub
+
+    caplog.set_level(logging.INFO)
+    monkeypatch.setenv("HERMES_API_KEY", "hermes-key")
+    brain = build_brain(dataclasses.replace(CONFIG, brain_provider="hermes"), Hub(), store=None)
+    assert isinstance(brain.provider, HermesProvider)
+    assert brain.provider.base_url == "http://127.0.0.1:8642/v1"
+    assert brain.provider.model == "hermes-agent"
+    assert brain.provider.timeout_s == 120
+    assert "brain: hermes at http://127.0.0.1:8642/v1" in caplog.text
+    assert "hermes-key" not in caplog.text
+
+
+def test_hermes_settings_come_from_host_toml(monkeypatch):
+    import dataclasses
+
+    from test_brain import CONFIG
+
+    from musehost.app import build_brain
+    from musehost.hub import Hub
+
+    monkeypatch.setenv("HERMES_API_KEY", "hermes-key")
+    config = dataclasses.replace(
+        CONFIG,
+        brain_provider="hermes",
+        brain_base_url="http://192.168.4.50:8642/v1",
+        brain_model="hermes-custom",
+        brain_timeout_s=45,
+    )
+    provider = build_brain(config, Hub(), store=None).provider
+    assert (provider.base_url, provider.model, provider.timeout_s) == (
+        "http://192.168.4.50:8642/v1",
+        "hermes-custom",
+        45,
+    )
+
+
+def test_hermes_without_its_key_leaves_the_placeholder(monkeypatch, caplog):
+    import dataclasses
+
+    from test_brain import CONFIG
+
+    from musehost.app import build_brain
+    from musehost.hub import Hub
+
+    monkeypatch.delenv("HERMES_API_KEY", raising=False)
+    config = dataclasses.replace(CONFIG, brain_provider="hermes")
+    assert build_brain(config, Hub(), store=None) is None
+    assert "HERMES_API_KEY" in caplog.text
+
+
+def test_brain_timeout_round_trips(tmp_path):
+    import dataclasses
+
+    from musehost.config import HostConfig
+
+    config = HostConfig(hostnames=("h",), ips=())
+    assert config.brain_timeout_s == 120
+    changed = dataclasses.replace(config, brain_timeout_s=30)
+    changed.save(tmp_path / "host.toml")
+    assert HostConfig.load(tmp_path / "host.toml") == changed

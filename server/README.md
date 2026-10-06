@@ -179,6 +179,7 @@ Clio answers with a language model chosen in `host.toml`:
 | `claude` (default) | `ANTHROPIC_API_KEY` | `brain_model` defaults to `claude-opus-5-5` at `brain_effort = "low"`; web search when `brain_web_search = true` |
 | `openai` | `OPENAI_API_KEY`, `brain_model` | Chat Completions with function tools; no web search |
 | `vllm` | `brain_base_url`, `brain_model` (key optional: `VLLM_API_KEY`) | Same adapter as OpenAI; start vLLM with `--enable-auto-tool-choice --tool-call-parser <parser for your model>` so tools work |
+| `hermes` | `HERMES_API_KEY` | A [Hermes Agent](https://github.com/NousResearch/hermes-agent) on the Pi answers as Clio; `brain_base_url` defaults to `http://127.0.0.1:8642/v1`, `brain_model` to `hermes-agent`. See below |
 | `""` | — | Brain off: a placeholder answers |
 
 Keys live in `/var/lib/musehost/brain.env` (0600, owned by `musehost`), one
@@ -200,6 +201,34 @@ Tools and conversations:
 - Conversations are kept per gadget for 30 idle minutes
   (`brain_idle_minutes`), then start fresh.
 - With Claude or OpenAI, the conversation leaves the LAN.
+- `brain_timeout_s` (default 120) caps a turn; past it, Clio says she
+  couldn't reach her brain.
+
+### Hermes Agent
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) (Nous Research)
+can be Clio's brain. It brings its own memory, skills, scheduled tasks and
+messaging channels, and it uses the gadgets through musehost's MCP server
+(below). musehost doesn't install or run Hermes; on the Pi, as your login:
+
+1. Install Hermes with its installer and pick a model in `hermes setup` (an
+   Anthropic key works). See Hermes's own docs.
+2. Turn on its API server: in `~/.hermes/.env`, set
+   `API_SERVER_ENABLED=true` and `API_SERVER_KEY=<a long random string>`.
+3. Let it use the gadgets: run `musehost mcp-config` and add the printed block
+   to `~/.hermes/config.yaml`.
+4. Keep it running: `hermes gateway install`, then `hermes gateway start`.
+   Check with `hermes gateway status`; the API server listens on
+   127.0.0.1:8642.
+5. Point musehost at it: put `HERMES_API_KEY=<the same string>` in
+   `/var/lib/musehost/brain.env`, set `brain_provider = "hermes"` in
+   `/var/lib/musehost/host.toml`, then `sudo systemctl restart musehost`.
+
+Clio keeps her name and her short, speakable replies: musehost sends her
+instructions with every turn. Each musehost conversation is one Hermes
+conversation, which Hermes keeps. The journal shows `brain: hermes at
+http://127.0.0.1:8642/v1`; if Hermes is down, Clio says she couldn't reach
+her brain. To go back, set `brain_provider = "claude"` and restart.
 
 ## Gadgets over MCP
 
