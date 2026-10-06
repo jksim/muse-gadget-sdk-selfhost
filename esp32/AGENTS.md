@@ -171,6 +171,34 @@ internal-allocation options, as `devices/sdkconfig.ideaspark` does. Signed
 apps on a classic ESP32 need chip revision 3.0 or later
 (`CONFIG_ESP32_REV_MIN_3=y`).
 
+### A self-hosted Muse
+
+To pair with your own host instead of Muse's servers, add
+`devices/sdkconfig.selfhost` on top of the board's overlays:
+
+```sh
+cp /path/to/host-ca.pem selfhost/ca.pem     # gitignored; never commit it
+MUSE_EXTRA_DEFAULTS=devices/sdkconfig.selfhost tools/muse/board.sh build cores3
+MUSE_EXTRA_DEFAULTS=devices/sdkconfig.selfhost tools/muse/board.sh flash cores3
+```
+
+`MUSE_EXTRA_DEFAULTS` appends any overlay and builds in
+`build-muse-<profile>-<name>/`, so it doesn't share an sdkconfig with the
+normal build. The overlay:
+
+- adds `selfhost/ca.pem` to the certificate bundle (public roots stay, so
+  public image URLs still load);
+- turns off the home-network tunnel;
+- sets `CONFIG_MUSE_TTS_PATH="/tts"`: each finished reply is posted as
+  `{"text": ...}` on the chat session and the MP3 that comes back is played
+  while the speaker setting is on. A failed request, an HTTP error or a reset
+  falls back to captions at reading pace. Empty (the default) keeps replies
+  silent, as before.
+
+Muse chat uses the host Link was provisioned with when its own isn't set, so
+pairing once with the host is enough. The host must serve the same API as
+Muse: the device API, the Noise WebSocket, and the chat streams.
+
 ## Flash
 
 ### Identify the board first

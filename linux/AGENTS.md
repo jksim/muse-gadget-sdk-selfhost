@@ -136,6 +136,15 @@ A healthy start logs `commands run as <user>`, `Noise session established`,
   restarts a handshake on the same connection.
 - GATT status 133 on the phone is usually stale Bluetooth state on the phone.
   Toggling the phone's Bluetooth clears it.
+- A self-hosted Muse may add two fields to `provision_v2`, both saved in
+  `pairing.json` (see `tls.py`):
+  - `ca_cert`: the PEM of the host's own CA. It replaces the system store for
+    API calls and the Noise WebSocket, with hostname checks still on.
+  - `noise_static_pub`: the host's Noise static key (32 bytes, unpadded
+    base64url). The link then requires the responder to present that key.
+
+  An unusable value is refused with `error_invalid_ca` or
+  `error_invalid_noise_key`. Without them, nothing changes.
 
 ## Talking to the Muse
 
