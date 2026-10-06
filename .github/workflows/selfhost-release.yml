@@ -1,0 +1,111 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Builds the self-host firmware (devices/sdkconfig.selfhost) once per board and
+# publishes it as a GitHub release, for `musehost flash` to download. Nothing
+# host-specific is built in; each host sends its CA and Noise key at pairing.
+#
+# A selfhost-v1.2.3 tag publishes release selfhost-v1.2.3. A manual run builds
+# and keeps the zips as workflow artifacts only.
+name: Self-host firmware release
+
+on:
+  push:
+    tags: ["selfhost-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for the zip names (no release is made)"
+        required: true
+        default: "0.0.0-dev"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.board }}
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.1
+    strategy:
+      fail-fast: true
+      matrix:
+        board: [cores3]
+    defaults:
+      run:
+        shell: bash
+        working-directory: esp32
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Version
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then version=${REF_NAME#selfhost-v}; else version=$INPUT_VERSION; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build
+        env:
+          BOARD: ${{ matrix.board }}
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          if ! MUSE_EXTRA_DEFAULTS=devices/sdkconfig.selfhost tools/muse/board.sh build "$BOARD"; then
+            cat "/tmp/muse_build_$BOARD.log"
+            exit 1
+          fi
+      - name: Package
+        env:
+          BOARD: ${{ matrix.board }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          build=$(ls -d build-muse-*-selfhost)
+          python3 tools/muse/package_selfhost.py "$build" "$BOARD" "$VERSION" dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: firmware-${{ matrix.board }}
+          path: esp32/dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: firmware-*
+          path: dist
+          merge-multiple: true
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.zip --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" dist/*.zip --repo "$GITHUB_REPOSITORY" \
+              --title "Self-host firmware ${TAG#selfhost-v}" \
+              --notes "Firmware for self-hosted Muse gadgets. Flash it from the host with \`musehost flash\`; pair with \`musehost pair\`."
+          fi
