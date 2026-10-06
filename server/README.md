@@ -83,7 +83,9 @@ Building the firmware yourself is under [Development](#development).
 ## What install.sh does
 - checks for 64-bit Raspberry Pi OS with Python 3.11+, and installs curl,
   tar or rsync if missing;
-- adds the `musehost` user to `bluetooth` (pairing) and `dialout` (flashing);
+- adds the `musehost` user to `bluetooth` (pairing), and to `dialout` and
+  `plugdev` (flashing: Raspberry Pi OS gives Espressif USB serial ports to
+  `plugdev`);
 - downloads this repo from GitHub as a tarball (no git needed) and installs
   `server/` and the SDK's `linux/` client it uses into `/opt/musehost`;
 - installs uv and the Python environment;

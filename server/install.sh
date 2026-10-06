@@ -67,8 +67,12 @@ fi
 
 id musehost >/dev/null 2>&1 || useradd --system --home-dir "$state" --shell /usr/sbin/nologin musehost
 getent group bluetooth >/dev/null && usermod -aG bluetooth musehost
-# `musehost flash` writes firmware to a gadget on USB serial.
-getent group dialout >/dev/null && usermod -aG dialout musehost
+# `musehost flash` writes firmware to a gadget on USB serial. USB serial ports
+# are usually group dialout, but Raspberry Pi OS's OpenOCD udev rules give
+# Espressif's USB-JTAG serial (the CoreS3's port) to plugdev.
+for group in dialout plugdev; do
+    getent group "$group" >/dev/null && usermod -aG "$group" musehost
+done
 install -d -m 0700 -o musehost -g musehost "$state"
 
 say "Installing the code in $opt"
