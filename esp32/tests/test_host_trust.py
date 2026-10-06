@@ -200,6 +200,20 @@ int main(void) {
     assert(pick(CA, NULL) == NULL);
     /* A CA with no provisioned host to match is never used. */
     assert(host_trust_select(CA, "muse-host.local", NULL, NULL) == NULL);
+
+    /* The Noise pin: only for the paired host, and then the key must match. */
+    uint8_t pin[32], same[32], other[32];
+    for (int i = 0; i < 32; i++) pin[i] = same[i] = other[i] = (uint8_t)i;
+    other[31] ^= 0x80;
+    const char *nh = "muse-host.local", *api = "https://muse-host.local/";
+    assert(host_trust_pin_ok(NULL, nh, nh, api, other, 32));        /* not pinned */
+    assert(host_trust_pin_ok(pin, nh, nh, api, same, 32));          /* matches */
+    assert(host_trust_pin_ok(pin, "MUSE-HOST.local", nh, api, same, 32));
+    assert(!host_trust_pin_ok(pin, nh, nh, api, other, 32));        /* different key */
+    assert(!host_trust_pin_ok(pin, nh, nh, api, same, 31));         /* wrong length */
+    assert(!host_trust_pin_ok(pin, nh, nh, api, NULL, 0));          /* no key at all */
+    assert(host_trust_pin_ok(pin, "hatch.example", nh, api, other, 32));  /* not the paired host */
+    assert(!host_trust_pin_ok(pin, NULL, nh, api, other, 32));      /* unknown host: be strict */
     puts("ok");
     return 0;
 }

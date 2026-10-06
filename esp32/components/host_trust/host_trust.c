@@ -145,3 +145,16 @@ void host_trust_apply_tls(esp_tls_cfg_t *cfg, const char *host) {
         cfg->crt_bundle_attach = esp_crt_bundle_attach;
     }
 }
+
+bool host_trust_noise_key_ok(const char *host, const uint8_t *key, size_t key_len) {
+    uint8_t pin[HOST_TRUST_NOISE_KEY_BYTES];
+    lock();
+    bool pinned = s_has_key;
+    memcpy(pin, s_key, sizeof(pin));
+    bool ok = host_trust_pin_ok(pinned ? pin : NULL, host, s_noise_host, s_api_url, key, key_len);
+    unlock();
+    if (!ok) {
+        ESP_LOGE(TAG, "noise key mismatch for %s: not the paired host's key", host ? host : "?");
+    }
+    return ok;
+}

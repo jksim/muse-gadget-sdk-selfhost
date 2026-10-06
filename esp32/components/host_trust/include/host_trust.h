@@ -70,6 +70,18 @@ bool host_trust_host_of_url(const char *url, char *out, size_t cap);
 const char *host_trust_select(const char *ca, const char *host,
                               const char *noise_host, const char *api_url);
 
+/*
+ * Whether a Noise session to `host` may continue with the responder's static
+ * key `key`. With no pin (`pin` NULL), or a host other than the paired one,
+ * yes. For the paired host, or an unknown one, only when `key` is exactly the
+ * pinned 32 bytes (compared in constant time).
+ */
+bool host_trust_pin_ok(const uint8_t *pin, const char *host, const char *noise_host,
+                       const char *api_url, const uint8_t *key, size_t key_len);
+
+/* host_trust_pin_ok() with the pin and paired host loaded by host_trust_reload(). */
+bool host_trust_noise_key_ok(const char *host, const uint8_t *key, size_t key_len);
+
 #ifdef __cplusplus
 }
 #endif

@@ -116,6 +116,29 @@ class HostConnectionTrustContractTest(unittest.TestCase):
                 self.assertNotIn("host_trust_apply", source)
 
 
+class NoisePinContractTest(unittest.TestCase):
+    """Both Noise sessions check the pin between message 2 and message 3."""
+
+    SITES = {
+        "main/noise_control.cpp": ("session.ReadHandshakeMessage2(", "session.WriteHandshakeMessage3(",
+                                   "host_trust_noise_key_ok(s_noise_host"),
+        "components/muse/muse_chat_session.cpp": ("c->session->ReadHandshakeMessage2(",
+                                                  "c->session->WriteHandshakeMessage3(",
+                                                  "host_trust_noise_key_ok(s_host"),
+    }
+
+    def test_pin_checked_before_message_3(self) -> None:
+        for path, (read2, write3, check) in self.SITES.items():
+            with self.subTest(path=path):
+                source = (ROOT / path).read_text()
+                self.assertTrue('#include "host_trust.h"' in source, f"{path} includes host_trust.h")
+                self.assertTrue(check in source, f"{path} calls {check}...)")
+                at = source.index(check)
+                self.assertLess(source.index(read2), at)
+                self.assertLess(at, source.index(write3))
+                self.assertIn("peerStaticPublicKey()", source[source.index(read2) : at + 200])
+
+
 class StoreHostTrustTest(unittest.TestCase):
     """Runs the real store_host_trust() against fake NVS."""
 

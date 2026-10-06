@@ -27,6 +27,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_tls.h"
+#include "host_trust.h"
 #include "host_trust_tls.h"
 #include "esp_random.h"
 #include "esp_heap_caps.h"
@@ -708,6 +709,11 @@ static bool noise_handshake(esp_tls_t *tls, ClientSession &session,
         peer_extra_written);
     if (!status2.ok()) {
         ESP_LOGE(TAG, "ReadHandshakeMessage2 failed: %s", status2.str());
+        return false;
+    }
+    // A self-hosted Muse pins its Noise key at pairing; refuse any other.
+    ConstByteSpan peer_key = session.peerStaticPublicKey();
+    if (!host_trust_noise_key_ok(s_noise_host, peer_key.data(), peer_key.size())) {
         return false;
     }
 

@@ -50,6 +50,7 @@
 #include <new>
 
 #include "esp_attr.h"
+#include "host_trust.h"
 #include "host_trust_tls.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -592,6 +593,11 @@ static bool noise_handshake(conn_t *c)
     Status st = c->session->ReadHandshakeMessage2(ConstByteSpan(c->rx, n), ByteSpan(extra, sizeof(extra)), extra_len);
     if (!st.ok()) {
         ESP_LOGE(TAG, "handshake msg2: %s", st.str());
+        return false;
+    }
+    /* A self-hosted Muse pins its Noise key at pairing; refuse any other. */
+    ConstByteSpan peer_key = c->session->peerStaticPublicKey();
+    if (!host_trust_noise_key_ok(s_host, peer_key.data(), peer_key.size())) {
         return false;
     }
     /* The owner's msg3 payload is an empty protobuf; the bearer header authenticated us. */

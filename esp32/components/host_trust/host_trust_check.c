@@ -93,14 +93,26 @@ bool host_trust_host_of_url(const char *url, char *out, size_t cap) {
     return true;
 }
 
+static bool is_paired_host(const char *host, const char *noise_host, const char *api_url) {
+    if (!host || !*host) return false;
+    if (noise_host && *noise_host && strcasecmp(host, noise_host) == 0) return true;
+    char api_host[256];
+    return host_trust_host_of_url(api_url, api_host, sizeof(api_host))
+        && strcasecmp(host, api_host) == 0;
+}
+
 const char *host_trust_select(const char *ca, const char *host,
                               const char *noise_host, const char *api_url) {
-    if (!ca || !*ca || !host || !*host) return NULL;
-    if (noise_host && *noise_host && strcasecmp(host, noise_host) == 0) return ca;
-    char api_host[256];
-    if (host_trust_host_of_url(api_url, api_host, sizeof(api_host))
-        && strcasecmp(host, api_host) == 0) {
-        return ca;
-    }
-    return NULL;
+    if (!ca || !*ca) return NULL;
+    return is_paired_host(host, noise_host, api_url) ? ca : NULL;
+}
+
+bool host_trust_pin_ok(const uint8_t *pin, const char *host, const char *noise_host,
+                       const char *api_url, const uint8_t *key, size_t key_len) {
+    if (!pin) return true;
+    if (host && *host && !is_paired_host(host, noise_host, api_url)) return true;
+    if (!key || key_len != HOST_TRUST_NOISE_KEY_BYTES) return false;
+    uint8_t diff = 0;
+    for (size_t i = 0; i < HOST_TRUST_NOISE_KEY_BYTES; i++) diff |= (uint8_t)(pin[i] ^ key[i]);
+    return diff == 0;
 }
