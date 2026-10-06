@@ -58,6 +58,17 @@ def make_pki(common_name: str = "test CA") -> Pki:
         .not_valid_before(now - datetime.timedelta(minutes=5))
         .not_valid_after(now + datetime.timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        # Python 3.13+ verifies strictly (VERIFY_X509_STRICT): a CA with a path
+        # length needs keyCertSign, and certs need key identifiers.
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False, content_commitment=False, key_encipherment=False,
+                data_encipherment=False, key_agreement=False, key_cert_sign=True,
+                crl_sign=True, encipher_only=False, decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
         .sign(ca_key, hashes.SHA256(), backend)
     )
     key = ec.generate_private_key(ec.SECP256R1(), backend)
@@ -73,6 +84,9 @@ def make_pki(common_name: str = "test CA") -> Pki:
             x509.DNSName("localhost"),
             x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
         ]), critical=False)
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False
+        )
         .sign(ca_key, hashes.SHA256(), backend)
     )
     return Pki(
