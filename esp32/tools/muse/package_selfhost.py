@@ -53,6 +53,16 @@ def main(argv: list[str]) -> None:
         fail(f"board must be a simple name like cores3, not {board!r}")
     if not re.fullmatch(r"\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?", version):
         fail(f"version must look like 1.2.3, not {version!r}")
+    # The gadget reports the app's own version (version.txt) to the host; it
+    # must be the release's, not upstream's 999.0.0 placeholder.
+    try:
+        app_version = json.loads((build / "project_description.json").read_text())[
+            "project_version"
+        ]
+    except (OSError, ValueError, KeyError) as exc:
+        fail(f"no project_version in {build}/project_description.json: {exc}")
+    if app_version != version:
+        fail(f"the app was built as version {app_version}, not {version}; set esp32/version.txt")
     try:
         flasher = json.loads((build / "flasher_args.json").read_text())
     except (OSError, ValueError) as exc:

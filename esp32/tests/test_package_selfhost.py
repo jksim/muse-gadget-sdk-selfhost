@@ -35,7 +35,9 @@ FILES = {
 }
 
 
-def fake_build(root: Path, chip: str = "esp32s3", encrypted: str = "false") -> Path:
+def fake_build(
+    root: Path, chip: str = "esp32s3", encrypted: str = "false", app_version: str = "0.1.0"
+) -> Path:
     build = root / "build-muse-m5stack-cores3-selfhost"
     for offset, name in FILES.items():
         path = build / name
@@ -51,6 +53,7 @@ def fake_build(root: Path, chip: str = "esp32s3", encrypted: str = "false") -> P
     for offset, role in roles.items():
         flasher[role] = {"offset": offset, "file": FILES[offset], "encrypted": encrypted}
     (build / "flasher_args.json").write_text(json.dumps(flasher))
+    (build / "project_description.json").write_text(json.dumps({"project_version": app_version}))
     return build
 
 
@@ -117,6 +120,16 @@ class PackageSelfhostTest(unittest.TestCase):
             with self.subTest(version=version):
                 proc = package(build, self.tmp / "dist", "cores3", version)
                 self.assertNotEqual(proc.returncode, 0)
+
+    def test_refuses_a_build_whose_app_reports_another_version(self) -> None:
+        # The app's own version (from version.txt) is what the gadget reports to the
+        # host; a release labelled 0.1.0 must not carry upstream's 999.0.0.
+        build = fake_build(self.tmp, app_version="999.0.0")
+        proc = package(build, self.tmp / "dist", "cores3", "0.1.0")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("999.0.0", proc.stderr)
+        (build / "project_description.json").unlink()
+        self.assertNotEqual(package(build, self.tmp / "dist", "cores3", "0.1.0").returncode, 0)
 
     def test_refuses_a_board_name_that_is_not_simple(self) -> None:
         proc = package(fake_build(self.tmp), self.tmp / "dist", "../cores3", "0.1.0")

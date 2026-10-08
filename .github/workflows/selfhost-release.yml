@@ -65,8 +65,11 @@ jobs:
       - name: Build
         env:
           BOARD: ${{ matrix.board }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
+          # The app's own version, which the gadget reports to the host.
+          echo "$VERSION" > version.txt
           if ! MUSE_EXTRA_DEFAULTS=devices/sdkconfig.selfhost tools/muse/board.sh build "$BOARD"; then
             cat "/tmp/muse_build_$BOARD.log"
             exit 1
