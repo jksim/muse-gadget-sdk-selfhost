@@ -18,7 +18,15 @@ form.inline { display: inline; }
 .error { color: var(--bad); }
 .ok { color: var(--good); }
 .hint, .muted { color: var(--muted); font-size: .9em; }
-code, .fingerprint { font-family: ui-monospace, monospace; font-size: .9em; word-break: break-all; }
+code, .fingerprint { font-family: ui-monospace, monospace; font-size: .9em; overflow-wrap: anywhere; }
+.fingerprint { word-break: break-all; }
+.scroll { overflow-x: auto; }
+table.commands td.name, table.commands td.badge { white-space: nowrap; }
+table.commands td.name code { overflow-wrap: normal; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid #eceff3; }
 pre.log { max-height: 24rem; overflow: auto; background: #10141c; color: #d7dbe3; padding: .7rem; border-radius: 6px; font-size: .82em; }
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { display: inline; }
+ul.steps { list-style: none; padding: 0; font-family: ui-monospace, monospace; font-size: .88em; }
+ul.steps li { padding: .15rem 0; }

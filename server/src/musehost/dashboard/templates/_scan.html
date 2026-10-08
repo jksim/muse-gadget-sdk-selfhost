@@ -1,0 +1,19 @@
+{% if message %}<p class="muted">{{ message }}</p>
+{% elif not gadgets %}<p class="muted">No gadget in setup mode found. Is it showing the pairing screen?</p>
+{% else %}
+<form method="post" action="/dashboard/pair/start">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p>Gadget:</p>
+  {% for g in gadgets %}
+  <label><input type="radio" name="gadget" value="{{ g.address }} {{ g.name }}" {{ "checked" if loop.first }}>
+    {{ g.name or g.address }} <span class="muted">({{ g.rssi }} dBm)</span></label>
+  {% endfor %}
+  <label for="display_name">Name it (optional)</label>
+  <input id="display_name" name="display_name" placeholder="Kitchen" maxlength="64">
+  <label for="ssid">Wi-Fi network</label>
+  <input id="ssid" name="ssid" value="{{ ssid }}" required>
+  <label for="password">Wi-Fi password (used once, never stored)</label>
+  <input id="password" name="password" type="password" autocomplete="off" required>
+  <button type="submit">Pair</button>
+</form>
+{% endif %}

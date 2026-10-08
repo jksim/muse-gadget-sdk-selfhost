@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Pair a gadget</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if job %}
+<section><p>A pairing is under way: <a href="/dashboard/jobs/{{ job.id }}">follow it</a>.</p></section>
+{% else %}
+<section>
+  <p>Put the gadget in setup mode (a new or reset gadget is), keep it near the Pi, then scan.</p>
+  <button hx-post="/dashboard/pair/scan" hx-target="#found" hx-swap="innerHTML" hx-indicator="#scanning">Scan for gadgets (about 8 s)</button>
+  <span id="scanning" class="htmx-indicator muted">Scanning...</span>
+  <div id="found"></div>
+</section>
+{% endif %}
+{% endblock %}

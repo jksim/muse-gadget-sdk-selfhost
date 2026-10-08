@@ -26,7 +26,12 @@ ProtectSystem=strict
 ReadWritePaths=/var/lib/musehost
 ProtectHome=true
 PrivateTmp=true
-PrivateDevices=true
+# No devices but USB CDC serial (ttyACM), for the dashboard's flash job; the
+# musehost user's groups (dialout, plugdev) own those ports. Pairing reaches
+# BlueZ over D-Bus (AF_UNIX) as the bluetooth group.
+DevicePolicy=closed
+DeviceAllow=char-ttyACM rw
+SupplementaryGroups=dialout plugdev bluetooth
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

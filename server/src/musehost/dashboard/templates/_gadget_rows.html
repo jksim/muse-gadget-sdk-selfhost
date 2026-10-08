@@ -1,0 +1,8 @@
+{% for g in rows %}<tr>
+  <td><a href="/dashboard/gadgets/{{ g.node_id }}">{{ g.name }}</a></td>
+  <td><code>{{ g.node_id }}</code></td>
+  <td>{% if g.revoked %}<span class="error">revoked</span>{% elif g.online %}<span class="ok">online</span>{% else %}<span class="muted">offline</span>{% endif %}</td>
+  <td>{{ g.version or "-" }}</td>
+  <td>{{ g.last_seen }}</td>
+  <td>{{ g.enrolled }}</td>
+</tr>{% endfor %}

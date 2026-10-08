@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import struct
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 import zipfile
 from collections.abc import Callable, Iterable
@@ -244,15 +246,95 @@ def find_port(port: str | None, *, list_ports: Callable[[], list]) -> str:
     return gadgets[0]
 
 
-def run_esptool(args: list[str]) -> int:
-    """Runs esptool with its progress on this terminal; returns its exit status."""
+def _esptool_command(args: list[str]) -> list[str]:
     # Our own interpreter running esptool; the arguments are checked hex offsets,
     # temp file paths, and the port and settings from a verified manifest.
-    cmd = [sys.executable, "-m", "esptool", *args]
+    return [sys.executable, "-m", "esptool", *args]
+
+
+def run_esptool(args: list[str]) -> int:
+    """Runs esptool with its progress on this terminal; returns its exit status."""
+    cmd = _esptool_command(args)
     # esptool reads esptool.cfg from its working directory: run it in an empty
     # one, not wherever musehost was started (which may not even be readable).
     with tempfile.TemporaryDirectory() as cwd:
         return subprocess.run(cmd, check=False, cwd=cwd).returncode  # noqa: S603
+
+
+PROGRESS_EVERY_S = 2.0
+
+
+def run_esptool_lines(args: list[str], on_line: Callable[[str], None], holder=None) -> int:
+    """Runs esptool through a pipe, giving ``on_line`` each line it prints.
+
+    Image paths (the temp files) are shown by name only, and progress lines
+    ("... 42 %") at most every couple of seconds. ``holder``, a list, gets the
+    process, so a stopped job can kill it.
+    """
+    names = {a: Path(a).name for a in args if os.sep in a and Path(a).is_file()}
+    last_progress = 0.0
+
+    def emit(raw: bytes) -> None:
+        nonlocal last_progress
+        line = raw.decode(errors="replace").strip()
+        if not line:
+            return
+        for path, name in names.items():
+            line = line.replace(path, name)
+        if "%" in line and "100" not in line:
+            now = time.monotonic()
+            if now - last_progress < PROGRESS_EVERY_S:
+                return
+            last_progress = now
+        on_line(line)
+
+    with tempfile.TemporaryDirectory() as cwd:  # not the caller's esptool.cfg; see run_esptool
+        proc = subprocess.Popen(  # noqa: S603 - see _esptool_command
+            _esptool_command(args),
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        if holder is not None:
+            holder.append(proc)
+        pending = b""
+        for chunk in iter(lambda: proc.stdout.read1(512), b""):
+            *lines, pending = re.split(rb"[\r\n]", pending + chunk)
+            for raw in lines:
+                emit(raw)
+        emit(pending)
+        return proc.wait()
+
+
+def prepare(
+    config,
+    state: Path,
+    *,
+    board: str,
+    version: str | None = None,
+    file: str | None = None,
+    port: str | None = None,
+    progress: Callable[[str], None] = print,
+) -> tuple[Firmware, str]:
+    """The checked firmware (a release, or ``file``) and the gadget's port.
+
+    Shared by ``musehost flash`` and the dashboard's flash job; raises
+    FlashError, or OSError for network trouble or an unreadable file.
+    """
+    if file:
+        path = Path(file)
+    else:
+        progress(f"Looking for {board} firmware in {config.firmware_repo} releases...")
+        path = fetch_release(
+            config.firmware_repo,
+            board=board,
+            version=version,
+            cache=state / "firmware",
+            fetch=http_get,
+        )
+    fw = load_firmware(path, board=board)
+    return fw, find_port(port, list_ports=serial_ports)
 
 
 def write(

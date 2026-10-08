@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Gadgets</h1>
+<section>
+  <table>
+    <thead><tr><th>Name</th><th>Node</th><th>Now</th><th>Firmware</th><th>Last seen</th><th>Enrolled</th></tr></thead>
+    <tbody hx-ext="sse" sse-connect="/dashboard/gadgets/events" sse-swap="gadgets">
+      {% include "_gadget_rows.html" %}
+    </tbody>
+  </table>
+  {% if not rows %}<p class="muted">No gadgets yet. Pair one with <code>musehost pair</code>.</p>{% endif %}
+</section>
+{% endblock %}

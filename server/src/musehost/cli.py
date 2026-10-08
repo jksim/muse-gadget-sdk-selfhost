@@ -213,45 +213,17 @@ async def _pair(args: argparse.Namespace, state: Path) -> int:
         return _fail("no Wi-Fi network given; pass --ssid")
     password = getpass.getpass(f"Wi-Fi password for {ssid}: ")
 
-    config = HostConfig.load(state / CONFIG_FILE)
-    tokens = Tokens(Store.open(state / DB_FILE))
-    started = tokens.now()
-    print(f"Connecting to {gadget.name}...")
     try:
-        async with ble_client.BleLink(gadget.address) as link:
-            client = pair.PairingClient(link)
-            info = await client.pair(
-                on_confirm_wait=lambda info: print(
-                    f"Press the button on {gadget.name} to confirm (60 s)..."
-                )
-            )
-            print(f"Confirmed: {info['node_id']}. Sending Wi-Fi and host details...")
-            node_id = await pair.provision(
-                client,
-                info,
-                tokens=tokens,
-                config=config,
-                ssid=ssid,
-                password=password,
-                ca_pem=(state / "ca.pem").read_text(),
-                noise_static_pub=pki.noise_public_b64(
-                    pki.load_noise_key(state / "noise_static.key")
-                ),
-                display_name=args.display_name or gadget.name,
-            )
+        await pair.run_pairing(
+            state,
+            gadget,
+            ssid=ssid,
+            password=password,
+            display_name=args.display_name or gadget.name,
+            wait_s=args.wait,
+        )
     except pair.PairingFailed as exc:
         return _fail(f"pairing {gadget.name} failed: {exc}")
-    print(f"Provisioned {node_id}. Waiting for it to reach the host...")
-    deadline = time.monotonic() + args.wait
-    while time.monotonic() < deadline:
-        row = tokens.store.db.execute(
-            "SELECT last_seen FROM devices WHERE node_id = ?", (node_id,)
-        ).fetchone()
-        if row and row["last_seen"] and row["last_seen"] >= started:
-            print(f"{node_id} reached the host.")
-            return 0
-        await asyncio.sleep(1)
-    print(f"{node_id} hasn't reached the host yet; check its log or `musehost devices list`.")
     return 0
 
 
@@ -416,19 +388,9 @@ def cmd_flash(args: argparse.Namespace, state: Path) -> int:
     """Write the self-host firmware to a gadget on this machine's USB."""
     config = HostConfig.load(state / CONFIG_FILE)
     try:
-        if args.file:
-            path = Path(args.file)
-        else:
-            print(f"Looking for {args.board} firmware in {config.firmware_repo} releases...")
-            path = flash.fetch_release(
-                config.firmware_repo,
-                board=args.board,
-                version=args.version,
-                cache=state / "firmware",
-                fetch=flash.http_get,
-            )
-        fw = flash.load_firmware(path, board=args.board)
-        port = flash.find_port(args.port, list_ports=flash.serial_ports)
+        fw, port = flash.prepare(
+            config, state, board=args.board, version=args.version, file=args.file, port=args.port
+        )
     except flash.FlashError as exc:
         return _fail(str(exc))
     except OSError as exc:  # network trouble, or an unreadable file

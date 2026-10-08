@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Flash a gadget</h1>
+{% if job %}
+<section><p>A flash is under way: <a href="/dashboard/jobs/{{ job.id }}">follow it</a>.</p></section>
+{% else %}
+<section>
+  <p>Writes the self-host firmware from <code>{{ repo }}</code>'s releases to a gadget
+  plugged into the Pi's USB (a data cable). The download is checked before anything is written.</p>
+  <p>Gadget on USB:
+    {% if ports|length == 1 %}<span class="ok">{{ ports[0] }}</span>
+    {% elif ports %}<span class="error">several ({{ ports|join(", ") }}); unplug all but one</span>
+    {% else %}<span class="muted">none found; plug it in, then reload</span>{% endif %}</p>
+  <form method="post" action="/dashboard/flash/start">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="board">Board</label>
+    <select id="board" name="board">{% for b in boards %}<option>{{ b }}</option>{% endfor %}</select>
+    <label for="version">Release (empty for the newest; or a version such as 0.1.1)</label>
+    <input id="version" name="version" autocomplete="off">
+    <label><input type="checkbox" name="erase"> Erase settings (Wi-Fi and pairing; pair it again afterwards)</label>
+    <label for="confirm">To erase, type <strong>erase</strong></label>
+    <input id="confirm" name="confirm" autocomplete="off">
+    <button type="submit">Flash</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

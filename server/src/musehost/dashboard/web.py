@@ -318,10 +318,11 @@ def create_dashboard(state: Path, parent) -> object:
     async def logs(request: Request):
         return page(request, "_logs.html", {"lines": logring.install().lines()})
 
-    from musehost.dashboard import settings
+    from musehost.dashboard import gadgets, settings
 
     routes = [
         *settings.routes(state, parent),
+        *gadgets.routes(state, parent),
         Route("/", home),
         Route("/ca", ca_page),
         Route("/ca.pem", ca_pem),

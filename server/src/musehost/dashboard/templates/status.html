@@ -12,7 +12,7 @@
       {% else %}<span class="muted">off: the placeholder answers</span>{% endif %}
     </td></tr>
     <tr><th>MCP</th><td>{% if mcp_port %}on, 127.0.0.1:{{ mcp_port }}{% else %}<span class="muted">off</span>{% endif %}</td></tr>
-    <tr><th>Gadgets</th><td>{{ paired }} paired, {{ online }} online</td></tr>
+    <tr><th>Gadgets</th><td><a href="/dashboard/gadgets">{{ paired }} paired, {{ online }} online</a></td></tr>
   </table>
 </section>
 <section>

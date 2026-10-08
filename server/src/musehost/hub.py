@@ -110,6 +110,10 @@ class Hub:
         """Call ``callback()`` whenever a gadget registers or goes offline."""
         self._change_listeners.append(callback)
 
+    def off_change(self, callback) -> None:
+        if callback in self._change_listeners:
+            self._change_listeners.remove(callback)
+
     def _changed(self) -> None:
         for callback in list(self._change_listeners):
             try:

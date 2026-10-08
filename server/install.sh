@@ -173,7 +173,13 @@ exec sudo -u musehost $opt/server/.venv/bin/musehost --state-dir $state "\$@"
 WRAP
 chmod 0755 /usr/local/bin/musehost
 
-sed "s/@BIND@/$bind/" "$opt/server/deploy/musehost.service" > /etc/systemd/system/musehost.service
+# systemd refuses a unit naming a group that doesn't exist; keep the ones that do.
+groups=""
+for group in dialout plugdev bluetooth; do
+    getent group "$group" >/dev/null && groups="$groups $group"
+done
+sed -e "s/@BIND@/$bind/" -e "s/^SupplementaryGroups=.*/SupplementaryGroups=${groups# }/" \
+    "$opt/server/deploy/musehost.service" > /etc/systemd/system/musehost.service
 systemctl daemon-reload
 systemctl enable --quiet musehost
 systemctl restart musehost

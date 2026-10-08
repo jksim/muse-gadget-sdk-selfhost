@@ -101,7 +101,8 @@ Building the firmware yourself is under [Development](#development).
   downloads at run time);
 - puts a readable copy of the CA certificate in `/opt/musehost/ca.pem`, for
   checking the host with `curl --cacert`;
-- starts `musehost.service`, which binds 443 without root.
+- starts `musehost.service`, which binds 443 without root. Its sandbox allows
+  no devices except USB serial (`ttyACM`), for flashing from the dashboard.
 
 Optional settings, passed through sudo
 (`curl … | sudo MUSEHOST_HOSTNAME=clio.local bash`):
@@ -199,6 +200,18 @@ trusting it lets the browser accept this host only.
 **Pages:**
 - **Status:** version and uptime, the CA fingerprint, the speech model, voice,
   brain and MCP states, gadget counts and musehost's recent log lines.
+- **Gadgets:** every paired gadget, online or not, updating live. A
+  gadget's page checks its health (battery, memory, Wi-Fi and so on), lists
+  its commands and which of them Clio may use, and revokes it after you type
+  its name (an online gadget is told, and goes back to pairing).
+- **Pair:** scans for gadgets in setup mode, then pairs the one you choose
+  with the Wi-Fi network you give (the password is used once and not
+  stored). The steps show live, including when to press the gadget's button;
+  the page can be closed and reopened while it runs.
+- **Flash:** writes the newest self-host release (or a version you name) to
+  the gadget plugged into the Pi's USB, showing esptool's progress. The
+  download is checked before anything is written; erasing the gadget's
+  settings needs the word `erase` typed.
 - **Settings:**
   - the brain (provider, model, base URL, effort, web search, timeout),
     applied to the next turn;

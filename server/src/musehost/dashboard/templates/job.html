@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+<section>
+  {% if job.state == "running" %}
+  <p>State: <span id="job-state" hx-ext="sse" sse-connect="/dashboard/jobs/{{ job.id }}/events" sse-swap="done" sse-close="done"><span class="muted">running</span></span></p>
+  <ul class="steps" hx-ext="sse" sse-connect="/dashboard/jobs/{{ job.id }}/events" sse-swap="line" hx-swap="beforeend"></ul>
+  <p class="hint">You can close this page; the job carries on. Reload to see where it is.</p>
+  {% else %}
+  <p>State: <span class="{{ 'ok' if job.state == 'succeeded' else 'error' }}">{{ job.state }}</span>{% if job.reason %}: {{ job.reason }}{% endif %}</p>
+  <ul class="steps">{% for stamp, text in job.events %}<li><span class="muted">{{ when(stamp) }}</span> {{ text }}</li>{% endfor %}</ul>
+  {% if job.result and job.result.node_id %}<p><a class="button" href="/dashboard/gadgets/{{ job.result.node_id }}">See the gadget</a></p>{% endif %}
+  {% endif %}
+</section>
+{% endblock %}

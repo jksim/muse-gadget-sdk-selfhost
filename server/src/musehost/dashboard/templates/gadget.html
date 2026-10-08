@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a href="/dashboard/gadgets">← Gadgets</a></p>
+<h1>{{ gadget.name }}</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<section>
+  <table>
+    <tr><th>Node</th><td><code>{{ gadget.node_id }}</code></td></tr>
+    <tr><th>Now</th><td>{% if gadget.revoked %}<span class="error">revoked</span>{% elif gadget.online %}<span class="ok">online</span>{% else %}<span class="muted">offline</span>{% endif %}</td></tr>
+    <tr><th>Firmware</th><td>{{ gadget.version or "-" }} {{ gadget.platform }}</td></tr>
+    <tr><th>Last seen</th><td>{{ gadget.last_seen }}</td></tr>
+    <tr><th>Enrolled</th><td>{{ gadget.enrolled }}</td></tr>
+  </table>
+</section>
+{% if not gadget.revoked %}
+<section>
+  <h2>Health</h2>
+  <button hx-post="/dashboard/gadgets/{{ gadget.node_id }}/health" hx-target="#health" hx-swap="innerHTML">Check health</button>
+  <div id="health"></div>
+</section>
+{% endif %}
+{% if commands %}
+<section>
+  <h2>Commands</h2>
+  <div class="scroll"><table class="commands">
+    {% for name, description in commands %}<tr>
+      <td class="name"><code>{{ name }}</code></td><td>{{ description }}</td>
+      <td class="badge">{% if name in allowed %}<span class="ok">Clio may use</span>{% endif %}</td>
+    </tr>{% endfor %}
+  </table></div>
+</section>
+{% endif %}
+{% if not gadget.revoked %}
+<section>
+  <h2>Revoke</h2>
+  <p>Cuts this gadget off; if it's online it wipes its setup and goes back to pairing.</p>
+  <form method="post" action="/dashboard/gadgets/{{ gadget.node_id }}/revoke">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="confirm">Type <strong>{{ gadget.name }}</strong> to confirm</label>
+    <input id="confirm" name="confirm" autocomplete="off">
+    <button type="submit" class="danger">Revoke</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

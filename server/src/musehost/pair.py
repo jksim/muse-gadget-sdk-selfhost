@@ -19,7 +19,9 @@ import hashlib
 import json
 import logging
 import os
+import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from cryptography.exceptions import InvalidTag
@@ -321,6 +323,65 @@ async def provision(
         if isinstance(exc, TimeoutError):
             raise PairingFailed("no auth_ok from the device in time") from None
         raise
+
+
+async def run_pairing(
+    state: Path,
+    gadget,
+    *,
+    ssid: str,
+    password: str,
+    display_name: str = "",
+    wait_s: float = 60,
+    progress=print,
+) -> tuple[str, bool]:
+    """Pair ``gadget`` (a ``ble_client.Gadget``) over Bluetooth and provision it.
+
+    Shared by ``musehost pair`` and the dashboard's pair job; ``progress`` gets
+    each step as a line of text, never the password. Returns the node id and
+    whether the gadget reached the host within ``wait_s``. Raises
+    PairingFailed; tokens issued for a failed or cancelled pairing are revoked.
+    """
+    from musehost import ble_client, pki
+    from musehost.config import HostConfig
+    from musehost.store import Store
+    from musehost.tokens import Tokens
+
+    config = HostConfig.load(state / "host.toml")
+    tokens = Tokens(Store.open(state / "musehost.db"))
+    started = tokens.now()
+    progress(f"Connecting to {gadget.name}...")
+    async with ble_client.BleLink(gadget.address) as link:
+        client = PairingClient(link)
+        info = await client.pair(
+            on_confirm_wait=lambda info: progress(
+                f"Press the button on {gadget.name} to confirm (60 s)..."
+            )
+        )
+        progress(f"Confirmed: {info['node_id']}. Sending Wi-Fi and host details...")
+        node_id = await provision(
+            client,
+            info,
+            tokens=tokens,
+            config=config,
+            ssid=ssid,
+            password=password,
+            ca_pem=(state / "ca.pem").read_text(),
+            noise_static_pub=pki.noise_public_b64(pki.load_noise_key(state / "noise_static.key")),
+            display_name=display_name or gadget.name,
+        )
+    progress(f"Provisioned {node_id}. Waiting for it to reach the host...")
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        row = tokens.store.db.execute(
+            "SELECT last_seen FROM devices WHERE node_id = ?", (node_id,)
+        ).fetchone()
+        if row and row["last_seen"] and row["last_seen"] >= started:
+            progress(f"{node_id} reached the host.")
+            return node_id, True
+        await asyncio.sleep(1)
+    progress(f"{node_id} hasn't reached the host yet; check its log or `musehost devices list`.")
+    return node_id, False
 
 
 def _public_bytes(key: ec.EllipticCurvePrivateKey) -> bytes:
