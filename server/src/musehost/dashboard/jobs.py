@@ -55,7 +55,7 @@ class Jobs:
             (j for j in self._jobs.values() if j.kind == kind and j.state == "running"), None
         )
 
-    def start(self, kind: str, work, timeout_s: float) -> Job:
+    def start(self, kind: str, work, timeout_s: float, announce_end: bool = True) -> Job:
         if self.running(kind) is not None:
             raise Busy(kind)
         job = Job(id=secrets.token_urlsafe(9), kind=kind)
@@ -63,10 +63,12 @@ class Jobs:
         finished = [j for j in self._jobs.values() if j.state != "running"]
         for old in finished[:-KEEP_FINISHED]:
             del self._jobs[old.id]
-        job._task = asyncio.get_running_loop().create_task(self._run(job, work, timeout_s))
+        job._task = asyncio.get_running_loop().create_task(
+            self._run(job, work, timeout_s, announce_end)
+        )
         return job
 
-    async def _run(self, job: Job, work, timeout_s: float) -> None:
+    async def _run(self, job: Job, work, timeout_s: float, announce_end: bool) -> None:
         log.info("job %s (%s) started", job.id, job.kind)
         try:
             async with asyncio.timeout(timeout_s):
@@ -79,28 +81,36 @@ class Jobs:
         finally:
             if job.state == "running":  # cancelled
                 job.state, job.reason = "failed", "stopped"
-            job.progress("Done." if job.state == "succeeded" else f"Failed: {job.reason}")
+            if announce_end:
+                job.progress("Done." if job.state == "succeeded" else f"Failed: {job.reason}")
             log.info("job %s (%s) %s", job.id, job.kind, job.state)
             job.done.set()
 
     async def events(
-        self, job: Job, is_disconnected, after: int | None = None, keepalive_s: float = 15
+        self,
+        job: Job,
+        is_disconnected,
+        after: int | None = None,
+        keepalive_s: float = 15,
+        line=None,
+        done=None,
     ):
-        """SSE: each event (``line``) after id ``after``, following until the job ends."""
+        """SSE: each event after id ``after``, following until the job ends.
+
+        ``line(stamp, text)`` and ``done(job)`` give an event's name and HTML;
+        by default timestamped ``line`` steps and a ``done`` state.
+        """
+        line = line or _step
+        done = done or _state
         index = 0 if after is None else after + 1
         while True:
             job._more.clear()
             while index < len(job.events):
-                stamp, text = job.events[index]
-                clock = time.strftime("%H:%M:%S", time.localtime(stamp))
-                yield (
-                    f"id: {index}\nevent: line\n"
-                    f'data: <li><span class="muted">{clock}</span> {escape(text)}</li>\n\n'
-                )
+                name, html = line(*job.events[index])
+                yield _event(name, html, index)
                 index += 1
             if job.done.is_set():
-                style = "ok" if job.state == "succeeded" else "error"
-                yield f'event: done\ndata: <span class="{style}">{job.state}</span>\n\n'
+                yield _event(*done(job))
                 return
             if await is_disconnected():
                 return
@@ -108,3 +118,19 @@ class Jobs:
                 await asyncio.wait_for(job._more.wait(), keepalive_s)
             except TimeoutError:
                 yield ": keepalive\n\n"
+
+
+def _event(name: str, html: str, index: int | None = None) -> str:
+    head = f"id: {index}\n" if index is not None else ""
+    data = "".join(f"data: {part}\n" for part in html.split("\n"))
+    return f"{head}event: {name}\n{data}\n"
+
+
+def _step(stamp: float, text: str) -> tuple[str, str]:
+    clock = time.strftime("%H:%M:%S", time.localtime(stamp))
+    return "line", f'<li><span class="muted">{clock}</span> {escape(text)}</li>'
+
+
+def _state(job: Job) -> tuple[str, str]:
+    style = "ok" if job.state == "succeeded" else "error"
+    return "done", f'<span class="{style}">{job.state}</span>'

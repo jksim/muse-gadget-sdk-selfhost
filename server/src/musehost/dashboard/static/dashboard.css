@@ -30,3 +30,7 @@ pre.log { max-height: 24rem; overflow: auto; background: #10141c; color: #d7dbe3
 .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { display: inline; }
 ul.steps { list-style: none; padding: 0; font-family: ui-monospace, monospace; font-size: .88em; }
 ul.steps li { padding: .15rem 0; }
+.turns { display: flex; flex-direction: column; gap: .6rem; margin-bottom: 1rem; }
+.turn { padding: .5rem .7rem; border-radius: 8px; background: var(--bg); }
+.turn.clio { background: #eef3fd; }
+.turn .text { white-space: pre-wrap; margin-top: .2rem; }

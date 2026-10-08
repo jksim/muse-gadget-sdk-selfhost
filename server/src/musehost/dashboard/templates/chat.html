@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Chat with Clio</h1>
+<section>
+  <p class="hint">You talk as the operator, in the same conversation as <code>musehost chat</code>.
+  {% if fresh %}<span class="ok">A new conversation starts with your next message.</span>{% endif %}</p>
+  <div id="turns" class="turns"></div>
+  <form hx-post="/dashboard/chat/send" hx-target="#turns" hx-swap="beforeend">
+    <label for="message">Message</label>
+    {% include "_message_box.html" %}
+    <label for="device">With a gadget's tools</label>
+    <select id="device" name="device">
+      <option value="">none</option>
+      {% for g in gadgets %}<option value="{{ g.node_id }}">{{ g.display_name or g.node_id }}</option>{% endfor %}
+    </select>
+    <button type="submit">Send</button>
+  </form>
+  <form method="post" action="/dashboard/chat/new" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="link">New conversation</button>
+  </form>
+</section>
+{% endblock %}

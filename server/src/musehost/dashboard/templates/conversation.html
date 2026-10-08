@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a href="/dashboard/history">← History</a></p>
+<h1>{{ who }}</h1>
+<p class="muted">{{ started }} to {{ last }} · {{ row.provider }} {{ row.model }} · {{ row.message_count }} messages</p>
+<section class="turns">
+  {% for t in turns %}
+  <div class="turn {{ 'you' if t.role == 'user' else 'clio' }}">
+    <strong>{{ "Person" if t.role == "user" else "Clio" }}</strong>
+    {% if t.when %}<span class="muted">{{ t.when }}{% if t.via %}, through {{ t.via }}{% endif %}</span>{% endif %}
+    {% for kind, text in t.parts %}
+      {% if kind == "tool" %}<div class="muted tool">{{ text }}</div>{% else %}<div class="text">{{ text }}</div>{% endif %}
+    {% endfor %}
+  </div>
+  {% else %}<p class="muted">Nothing recorded.</p>{% endfor %}
+</section>
+{% endblock %}

@@ -212,6 +212,14 @@ trusting it lets the browser accept this host only.
   the gadget plugged into the Pi's USB, showing esptool's progress. The
   download is checked before anything is written; erasing the gadget's
   settings needs the word `erase` typed.
+- **Chat:** talk to Clio as the operator, in the same conversation as
+  `musehost chat`; optionally lend her a gadget's tools (as
+  `musehost chat --device`). Replies stream in; "New conversation" starts
+  afresh.
+- **History:** past conversations, the gadgets' voice turns and the
+  operator's, newest first. One conversation shows its messages, each person
+  turn with its time, and tool use as one line ("used device_health: ok");
+  the model's internal thinking isn't shown.
 - **Settings:**
   - the brain (provider, model, base URL, effort, web search, timeout),
     applied to the next turn;

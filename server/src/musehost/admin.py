@@ -14,7 +14,6 @@ import json
 import logging
 import os
 import socket
-import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -63,27 +62,18 @@ async def serve(path: Path, hub: Hub) -> asyncio.AbstractServer:
     return server
 
 
-OPERATOR = "operator"
-
-
 async def _chat(request: dict, hub: Hub, writer: asyncio.StreamWriter) -> None:
     """One operator turn: a JSON line per piece of Clio's reply, then ``done``."""
-    from musehost.chat import placeholder
-    from musehost.hub import ChatTurn
+    from musehost.chat import operator_turn
 
-    handler = hub.chat_handler or placeholder
-    history = getattr(handler, "history", None)
-    if request.get("new") and history is not None:
-        history.start_new(OPERATOR)
-    device = request.get("device") or None
-    turn = ChatTurn(
-        node_id=OPERATOR,
-        message_id=f"op-{uuid.uuid4()}",
-        text=str(request.get("message") or ""),
-        tool_node_id=device if isinstance(device, str) else None,
-    )
+    device = request.get("device")
     try:
-        async for piece in handler(turn):
+        async for piece in operator_turn(
+            hub,
+            str(request.get("message") or ""),
+            device=device if isinstance(device, str) else None,
+            new=bool(request.get("new")),
+        ):
             writer.write(json.dumps({"text": piece}).encode() + b"\n")
             await writer.drain()
         writer.write(b'{"done": true}\n')

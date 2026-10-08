@@ -1,0 +1,6 @@
+<div class="turn you"><strong>You</strong>{% if with %} <span class="muted">(with {{ with }}'s tools)</span>{% endif %}<div class="text">{{ message }}</div></div>
+<div class="turn clio" hx-ext="sse" sse-connect="/dashboard/chat/turns/{{ job.id }}/events" sse-close="done">
+  <strong>Clio</strong>
+  <div class="text"><span sse-swap="piece" hx-swap="beforeend"></span><span sse-swap="done" hx-swap="innerHTML"><span class="muted thinking">thinking...</span></span></div>
+</div>
+{% with oob=True %}{% include "_message_box.html" %}{% endwith %}

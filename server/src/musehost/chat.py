@@ -228,6 +228,29 @@ def _parse_wav(wav: bytes) -> tuple[int, int, int, int]:
     raise ValueError("no data chunk")
 
 
+OPERATOR = "operator"  # the conversation `musehost chat` and the dashboard share
+
+
+async def operator_turn(hub: Hub, message: str, device: str | None = None, new: bool = False):
+    """One operator turn, as pieces of Clio's reply.
+
+    ``device`` lends that gadget's tools; the turn stays in the operator's
+    conversation either way. ``new`` starts a fresh conversation first.
+    """
+    handler = hub.chat_handler or placeholder
+    history = getattr(handler, "history", None)
+    if new and history is not None:
+        history.start_new(OPERATOR)
+    turn = ChatTurn(
+        node_id=OPERATOR,
+        message_id=f"op-{uuid.uuid4()}",
+        text=message,
+        tool_node_id=device or None,
+    )
+    async for piece in handler(turn):
+        yield piece
+
+
 async def reply(hub: Hub, turn: ChatTurn, transcriber=None) -> None:
     """Transcribe a voice note if there is one, run the chat handler, stream its reply."""
     handler = hub.chat_handler or placeholder

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>History</h1>
+<section>
+  {% if items %}
+  <table>
+    <thead><tr><th>With</th><th>Started</th><th>Last</th><th>Brain</th><th>Messages</th></tr></thead>
+    {% for c in items %}<tr>
+      <td><a href="/dashboard/history/{{ c.id }}">{{ c.who }}</a></td>
+      <td>{{ c.started }}</td><td>{{ c.last }}</td>
+      <td>{{ c.provider }} <span class="muted">{{ c.model }}</span></td><td>{{ c.count }}</td>
+    </tr>{% endfor %}
+  </table>
+  <p>{% if page > 1 %}<a href="?page={{ page - 1 }}">← Newer</a>{% endif %}
+     {% if more %}<a href="?page={{ page + 1 }}">Older →</a>{% endif %}</p>
+  {% else %}<p class="muted">No conversations{% if page > 1 %} on this page{% endif %}.</p>{% endif %}
+</section>
+{% endblock %}
