@@ -152,6 +152,15 @@ class Transcriber:
         finally:
             self._loaded.set()
 
+    @property
+    def state(self) -> str:
+        """off | loading | ready | failed, as the dashboard shows it."""
+        if self._engine is None:
+            return "off"
+        if not self._loaded.is_set():
+            return "loading"
+        return "ready" if self._ready else "failed"
+
     async def wait_loaded(self, timeout: float | None = None) -> bool:
         return await asyncio.to_thread(self._loaded.wait, timeout)
 

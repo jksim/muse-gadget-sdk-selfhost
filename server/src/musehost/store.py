@@ -50,6 +50,12 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     content_json    TEXT NOT NULL,
     PRIMARY KEY (conversation_id, seq)
 );
+CREATE TABLE IF NOT EXISTS dashboard_sessions (
+    token_hash TEXT PRIMARY KEY,
+    csrf       TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    last_seen  REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS grants (
     hash       TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL,

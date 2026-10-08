@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Status</h1>
+<section>
+  <table>
+    <tr><th>musehost</th><td>{{ version }}, up {{ uptime }}, at <code>https://{{ host }}</code></td></tr>
+    <tr><th>CA</th><td>SHA-256 <code class="fingerprint">{{ fingerprint }}</code></td></tr>
+    <tr><th>Speech to text</th><td>{{ speech_model or "off" }}: <span class="{{ 'ok' if speech == 'ready' else ('error' if speech == 'failed' else 'muted') }}">{{ speech }}</span></td></tr>
+    <tr><th>Voice</th><td>{{ tts_voice or "off" }}: <span class="{{ 'ok' if voice == 'ready' else ('error' if voice == 'failed' else 'muted') }}">{{ voice }}</span></td></tr>
+    <tr><th>Brain</th><td>
+      {% if brain %}{{ brain.provider }} with {{ brain.model }} ({{ brain.key }})
+      {% else %}<span class="muted">off: the placeholder answers</span>{% endif %}
+    </td></tr>
+    <tr><th>MCP</th><td>{% if mcp_port %}on, 127.0.0.1:{{ mcp_port }}{% else %}<span class="muted">off</span>{% endif %}</td></tr>
+    <tr><th>Gadgets</th><td>{{ paired }} paired, {{ online }} online</td></tr>
+  </table>
+</section>
+<section>
+  <h2>Recent log</h2>
+  <div hx-get="/dashboard/logs" hx-trigger="every 5s" hx-swap="innerHTML">
+    {% include "_logs.html" %}
+  </div>
+</section>
+{% endblock %}

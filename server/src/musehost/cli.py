@@ -462,6 +462,31 @@ def cmd_flash(args: argparse.Namespace, state: Path) -> int:
     return 0
 
 
+def cmd_dashboard_password(args: argparse.Namespace, state: Path) -> int:
+    """Turn the web dashboard on with a password (or off with --off)."""
+    from musehost.dashboard import auth
+
+    store = Store.open(state / DB_FILE)
+    if args.off:
+        auth.clear_password(state, store)
+        print("The dashboard is off. Set a password to turn it on again.")
+        return 0
+    if args.stdin:
+        password = sys.stdin.readline().rstrip("\r\n")
+    else:
+        password = getpass.getpass("New dashboard password: ")
+        if getpass.getpass("Again: ") != password:
+            return _fail("the passwords don't match; nothing changed")
+    try:
+        auth.set_password(state, password, store)
+    except ValueError as exc:
+        return _fail(f"{exc}; nothing changed")
+    config = HostConfig.load(state / CONFIG_FILE)
+    print(f"Dashboard on: {config.api_url}/dashboard (other sessions were signed out)")
+    print(f"CA SHA-256: {ca_fingerprint((state / 'ca.pem').read_bytes())}")
+    return 0
+
+
 def cmd_mcp_config(args: argparse.Namespace, state: Path) -> int:
     """Print the block that connects Hermes Agent (or another MCP client) to the gadgets."""
     config = HostConfig.load(state / CONFIG_FILE)
@@ -612,6 +637,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     flash_cmd.add_argument("--yes", action="store_true", help="don't ask before writing")
     flash_cmd.set_defaults(func=cmd_flash)
+
+    dashboard = sub.add_parser(
+        "dashboard-password", help="set the web dashboard's password (turns it on)"
+    )
+    dashboard_how = dashboard.add_mutually_exclusive_group()
+    dashboard_how.add_argument("--stdin", action="store_true", help="read it from stdin")
+    dashboard_how.add_argument("--off", action="store_true", help="turn the dashboard off")
+    dashboard.set_defaults(func=cmd_dashboard_password)
 
     mcp_config = sub.add_parser(
         "mcp-config", help="print the block that lets Hermes Agent use the gadgets over MCP"

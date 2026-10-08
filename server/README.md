@@ -42,8 +42,9 @@ You need:
    ```
 
    It takes a few minutes. It downloads the code, the speech model and Clio's
-   voice (about 600 MB in all), asks for your API key (Enter skips it), and
-   starts the service. Run the same command again later to update; the CA,
+   voice (about 600 MB in all), asks for your API key and a
+   [web dashboard](#web-dashboard) password (Enter skips either), and starts
+   the service. Run the same command again later to update; the CA,
    paired gadgets and keys are kept.
 4. **Give the Pi a fixed address**: a DHCP reservation in your router. The
    service serves its LAN address and the certificate names it.
@@ -94,6 +95,8 @@ Building the firmware yourself is under [Development](#development).
 - on the first install only:
   - runs `musehost init --hostname <hostname>.local --ip <LAN address> --port 443`;
   - asks for an Anthropic API key and saves it to `brain.env` (0600);
+  - asks for a web dashboard password (hidden, twice, at least 12
+    characters); Enter, three bad tries or no terminal leave the dashboard off;
 - downloads the speech model and Clio's voice once (the service never
   downloads at run time);
 - puts a readable copy of the CA certificate in `/opt/musehost/ca.pem`, for
@@ -166,10 +169,55 @@ key.
 | `musehost download-model` / `transcribe FILE.wav` | Fetch the Whisper model once; transcribe a WAV |
 | `musehost download-voice [NAME]` / `say TEXT [--out F.mp3]` | Fetch the Piper voice once; speak text into an MP3 with timings |
 | `musehost flash [--board B] [--port P] [--version V \| --file F] [--erase-settings] [--yes]` | Write the self-host firmware to a gadget on USB |
+| `musehost dashboard-password [--stdin \| --off]` | Set the [web dashboard](#web-dashboard) password, which turns it on, and sign out its sessions; `--off` turns it off |
 | `musehost mcp-config [--rotate]` | Print the block that lets Hermes Agent (or another MCP client) use the gadgets; `--rotate` replaces the token |
 
 `--state-dir DIR` (or `$MUSEHOST_STATE_DIR`) picks another state directory.
 The service reads `host.toml` from the state directory.
+
+## Web dashboard
+
+`https://<hostname>.local/dashboard`, served by musehost itself on 443 with
+the host's own certificate. It is off (every page a 404) until it has a
+password: the one chosen during the install, or set later on the Pi with
+
+```sh
+musehost dashboard-password        # asks twice; at least 12 characters
+musehost dashboard-password --off  # turns it off again
+```
+
+Setting or changing the password signs out every browser. There is one
+password and no username.
+
+**Trusting the CA.** Browsers warn about the dashboard until they trust the
+host's CA. Open `https://<hostname>.local/dashboard/ca` (past the warning,
+once), check that the fingerprint matches the one
+`musehost dashboard-password` printed, download the certificate and follow
+the steps for Windows, macOS or Linux shown there. The CA is this Pi's own;
+trusting it lets the browser accept this host only.
+
+**Pages:**
+- **Status:** version and uptime, the CA fingerprint, the speech model, voice,
+  brain and MCP states, gadget counts and musehost's recent log lines.
+- **Settings:**
+  - the brain (provider, model, base URL, effort, web search, timeout),
+    applied to the next turn;
+  - API keys, write-only: the page shows only whether each is set; they're
+    saved to `brain.env`;
+  - the voice, from the Piper voices already downloaded;
+  - rotating the MCP token (the new one is shown once);
+  - the MCP port and speech model, which apply after a restart, and a
+    restart button.
+
+**Security:**
+- sign-ins are limited to 5 wrong passwords a minute per address, then 15
+  minutes of refusal;
+- sessions end after 30 days idle;
+- every change needs the page's CSRF token;
+- pages carry a strict Content-Security-Policy and load nothing from the
+  internet;
+- the password is stored only as a salted scrypt hash in
+  `/var/lib/musehost/dashboard.pw`.
 
 ## Clio's brain
 

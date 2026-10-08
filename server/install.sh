@@ -9,7 +9,8 @@
 # and the Python environment, creates the musehost user and /var/lib/musehost,
 # runs `musehost init` the first time only (so the CA and devices survive
 # updates), fetches the speech model and Clio's voice once, asks for an API key
-# for Clio's brain on the first install, and (re)starts the service on port 443.
+# for Clio's brain and a web dashboard password on the first install, and
+# (re)starts the service on port 443.
 #
 # Settings (environment variables, all optional):
 #   MUSEHOST_HOSTNAME  name in the certificate (default: this Pi's <hostname>.local)
@@ -84,7 +85,9 @@ rsync -a --delete --exclude .venv --exclude __pycache__ "$src/linux/" "$opt/linu
 
 run() { sudo -u musehost env HF_HOME="$state/.cache/huggingface" "$opt/server/.venv/bin/musehost" --state-dir "$state" "$@"; }
 
+first_install=0
 if [ ! -f "$state/host.toml" ]; then
+    first_install=1
     say "Creating the host's CA, certificate and keys"
     run init --hostname "$hostname" --ip "$bind" --port 443
 fi
@@ -120,6 +123,49 @@ if [ ! -f "$state/brain.env" ]; then
     unset key
 fi
 
+# BEGIN dashboard-password (tests/test_install_prompt.py runs this block)
+# The web dashboard stays off until it has a password. Ask for one on the
+# terminal; Enter, three bad tries or no terminal leave it off.
+ask_dashboard_password() {
+    local pw again
+    if ! { : > /dev/tty; } 2>/dev/null; then
+        echo "No terminal: the dashboard stays off. Turn it on with: musehost dashboard-password"
+        return 0
+    fi
+    for _ in 1 2 3; do
+        printf '\nChoose a web dashboard password (12+ characters, hidden; Enter to skip): ' > /dev/tty
+        IFS= read -rs pw < /dev/tty || pw=""
+        printf '\n' > /dev/tty
+        if [ -z "$pw" ]; then
+            echo "Skipped: the dashboard stays off. Turn it on with: musehost dashboard-password"
+            return 0
+        fi
+        if [ "${#pw}" -lt 12 ]; then
+            echo "It needs at least 12 characters." > /dev/tty
+            continue
+        fi
+        printf 'Again: ' > /dev/tty
+        IFS= read -rs again < /dev/tty || again=""
+        printf '\n' > /dev/tty
+        if [ "$pw" != "$again" ]; then
+            echo "They don't match." > /dev/tty
+            continue
+        fi
+        if printf '%s\n' "$pw" | run dashboard-password --stdin > /dev/null; then
+            dashboard_on=1
+            return 0
+        fi
+    done
+    echo "No password set: the dashboard stays off. Turn it on with: musehost dashboard-password"
+}
+# END dashboard-password
+
+dashboard_on=0
+if [ "$first_install" = 1 ]; then
+    ask_dashboard_password
+fi
+[ -f "$state/dashboard.pw" ] && dashboard_on=1
+
 cat > /usr/local/bin/musehost <<WRAP
 #!/bin/sh
 # Run musehost as its service account, against the service's state.
@@ -143,6 +189,17 @@ musehost is running: https://$hostname (also https://$bind)
   Logs:       journalctl -u musehost -f
   Gadget:     plug it into USB, then: musehost flash
   CA:         $opt/ca.pem${fingerprint:+ (SHA-256 $fingerprint)}
+DONE
+if [ "$dashboard_on" = 1 ]; then
+    cat <<DONE
+  Dashboard:  https://$hostname/dashboard (first trust the CA: https://$hostname/dashboard/ca)
+DONE
+else
+    cat <<DONE
+  Dashboard:  off; turn it on with: musehost dashboard-password
+DONE
+fi
+cat <<DONE
 
 Run the same command again to update; your CA, devices and keys are kept.
 DONE

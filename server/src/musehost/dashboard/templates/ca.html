@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <h1>Trust this host</h1>
+  <p>musehost uses its own certificate authority (CA), created on this Pi. Your browser
+  warns about the dashboard until you trust it, once per computer.</p>
+  <p>Its SHA-256 fingerprint: <code class="fingerprint">{{ fingerprint }}</code><br>
+  Check it matches what <code>musehost dashboard-password</code> printed on the Pi.</p>
+  <p><a class="button" href="/dashboard/ca.pem">Download the CA certificate</a></p>
+  <h2>Windows</h2>
+  <p>Open the downloaded file, choose <em>Install Certificate</em>, then <em>Current User</em>,
+  <em>Place all certificates in the following store</em>, <em>Trusted Root Certification
+  Authorities</em>. Restart the browser.</p>
+  <h2>macOS</h2>
+  <p>Open the file in Keychain Access (login keychain), double-click the certificate,
+  and under <em>Trust</em> set <em>Always Trust</em>.</p>
+  <h2>Linux</h2>
+  <p>Firefox and Chrome: Settings, Certificates, Authorities, Import, and trust it for
+  websites. System-wide: copy it to <code>/usr/local/share/ca-certificates/musehost.crt</code>
+  and run <code>sudo update-ca-certificates</code>.</p>
+  <p>Then open <code>https://{{ host }}/dashboard</code>.</p>
+</section>
+{% endblock %}

@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Settings</h1>
+{% if error %}<p class="error">{{ error }}. Nothing changed.</p>{% endif %}
+{% if saved == "restart" %}<p class="ok">Saved. These apply after a restart.</p>
+{% elif saved %}<p class="ok">Saved and applied.</p>{% endif %}
+{% if restarting %}<p class="ok">Restarting musehost. This page works again in about 15 seconds.</p>{% endif %}
+
+<section>
+  <h2>Brain</h2>
+  <p class="hint">Applies to the next turn; a turn under way finishes as it started.</p>
+  <form method="post" action="/dashboard/settings">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="section" value="brain">
+    <label for="brain_provider">Provider</label>
+    <select id="brain_provider" name="brain_provider">
+      {% for p in providers %}<option value="{{ p }}" {{ "selected" if p == config.brain_provider }}>{{ p or "off (placeholder)" }}</option>{% endfor %}
+    </select>
+    <label for="brain_model">Model (empty for the provider's default)</label>
+    <input id="brain_model" name="brain_model" value="{{ config.brain_model }}">
+    <label for="brain_base_url">Base URL (vLLM, Hermes or another OpenAI-compatible server)</label>
+    <input id="brain_base_url" name="brain_base_url" value="{{ config.brain_base_url }}">
+    <label for="brain_effort">Effort (Claude)</label>
+    <select id="brain_effort" name="brain_effort">
+      {% for e in efforts %}<option {{ "selected" if e == config.brain_effort }}>{{ e }}</option>{% endfor %}
+    </select>
+    <label><input type="checkbox" name="brain_web_search" {{ "checked" if config.brain_web_search }}> Web search (Claude)</label>
+    <label for="brain_timeout_s">Turn timeout (seconds)</label>
+    <input id="brain_timeout_s" name="brain_timeout_s" value="{{ config.brain_timeout_s | int }}">
+    <button type="submit">Save brain</button>
+  </form>
+</section>
+
+<section>
+  <h2>API keys</h2>
+  <p class="hint">Saved to brain.env on the Pi. Shown only as set or not set; leave a field empty to keep its key.</p>
+  <form method="post" action="/dashboard/settings">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="section" value="keys">
+    {% for name, present in keys.items() %}
+    <label for="{{ name }}">{{ name }}: <span class="{{ 'ok' if present else 'muted' }}">{{ "set" if present else "not set" }}</span></label>
+    <input id="{{ name }}" name="{{ name }}" type="password" autocomplete="off">
+    {% endfor %}
+    <button type="submit">Save keys</button>
+  </form>
+  {% for name, present in keys.items() if present %}
+  <form method="post" action="/dashboard/settings" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="section" value="keys">
+    <button type="submit" name="clear" value="{{ name }}" class="danger">Remove {{ name }}</button>
+  </form>
+  {% endfor %}
+</section>
+
+<section>
+  <h2>Voice</h2>
+  <form method="post" action="/dashboard/settings">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="section" value="voice">
+    <label for="tts_voice">Spoken replies (downloaded Piper voices)</label>
+    <select id="tts_voice" name="tts_voice">
+      <option value="" {{ "selected" if not config.tts_voice }}>off</option>
+      {% for v in voices %}<option {{ "selected" if v == config.tts_voice }}>{{ v }}</option>{% endfor %}
+    </select>
+    <button type="submit">Save voice</button>
+  </form>
+</section>
+
+<section>
+  <h2>MCP</h2>
+  {% if new_token %}
+  <p>New token (shown once; MCP clients need it now):<br><code class="fingerprint">{{ new_token }}</code></p>
+  {% endif %}
+  <form method="post" action="/dashboard/settings">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="section" value="mcp-rotate">
+    <button type="submit" class="danger">Rotate the MCP token</button>
+  </form>
+</section>
+
+<section>
+  <h2>After a restart</h2>
+  <form method="post" action="/dashboard/settings">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="section" value="restart-settings">
+    <label for="mcp_port">MCP port on 127.0.0.1 (0 is off)</label>
+    <input id="mcp_port" name="mcp_port" value="{{ on_disk.mcp_port }}">
+    <label for="speech_model">Speech-to-text model (empty is off)</label>
+    <input id="speech_model" name="speech_model" value="{{ on_disk.speech_model }}">
+    <button type="submit">Save</button>
+  </form>
+  <form method="post" action="/dashboard/settings">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="section" value="restart">
+    <button type="submit" class="danger">Restart musehost</button>
+  </form>
+</section>
+{% endblock %}

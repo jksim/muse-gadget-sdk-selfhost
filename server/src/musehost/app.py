@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from starlette.applications import Starlette
-from starlette.routing import WebSocketRoute
+from starlette.routing import Mount, Route, WebSocketRoute
 
 from musehost import admin, api, chat, link, mcp_server, noise_server, pki, speech, voice_out
 from musehost.brain import Brain
@@ -130,6 +130,22 @@ def create_app(state: Path, clock: Callable[[], float] = time.time) -> Starlette
     app.state.noise_static_pub = pki.noise_public_b64(app.state.noise_key)
     app.state.hub = Hub()
     app.state.mcp_server = None
+    app.state.started_at = time.time()
+    from musehost.dashboard import logring
+
+    logring.install()
+    from musehost.dashboard.web import create_dashboard
+
+    app.routes.append(Mount("/dashboard", app=create_dashboard(state, app)))
+
+    class _DashboardHome:
+        """``/dashboard`` itself, as ``/dashboard/`` (no slash redirect first)."""
+
+        async def __call__(self, scope, receive, send):
+            scope = {**scope, "path": "/dashboard/", "raw_path": b"/dashboard/"}
+            await app.router(scope, receive, send)
+
+    app.routes.append(Route("/dashboard", _DashboardHome(), methods=["GET", "POST"]))
 
     def unpair_on_revoke(node_id: str) -> None:
         # Revocations made in this process (e.g. refresh-token reuse) end the
