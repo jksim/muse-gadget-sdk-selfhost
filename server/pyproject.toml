@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "musehost"
-version = "0.1.0"
+version = "0.2.0"
 description = "Self-hosted host for Muse gadgets"
 requires-python = ">=3.11"
 dependencies = [
