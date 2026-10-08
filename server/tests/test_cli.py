@@ -366,30 +366,48 @@ def test_say_without_a_voice_explains_how_to_get_one(state, tmp_path, capsys):
         ("download-voice", "voice_out", "download_voice"),
     ],
 )
-def test_downloads_print_one_line_not_library_chatter(
-    state, monkeypatch, capsys, caplog, command, module, attr
-):
-    import importlib
-    import logging
-    import warnings
+def test_downloads_print_one_line_not_library_chatter(state, tmp_path, command, module, attr):
+    """Runs the command in a fresh interpreter: logger levels and warning filters
+    are process-wide, so a thread left over from another test could change them
+    mid-download and make this flaky (it did once in CI). The real CLI runs alone.
+    """
+    import json
+    import subprocess
+    import sys
 
-    def noisy_fetch(name, models_dir):
-        logging.getLogger("httpx").info('HTTP Request: GET https://huggingface.co/x "200 OK"')
-        logging.getLogger("huggingface_hub.utils._http").warning("unauthenticated requests")
-        logging.getLogger("piper.download_voices").info("Downloaded: x")
-        warnings.warn("`local_dir_use_symlinks` is deprecated", UserWarning, stacklevel=1)
-        return models_dir / name
+    result = tmp_path / "result.json"
+    code = f"""
+import importlib, json, logging, sys, warnings
+from musehost.cli import main
 
-    monkeypatch.setattr(importlib.import_module(f"musehost.{module}"), attr, noisy_fetch)
-    caplog.set_level(logging.DEBUG)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        assert main(["--state-dir", str(state), command]) == 0
-    out = capsys.readouterr()
-    text = out.out + out.err + caplog.text
+def noisy_fetch(name, models_dir):
+    logging.getLogger("httpx").info('HTTP Request: GET https://huggingface.co/x "200 OK"')
+    logging.getLogger("huggingface_hub.utils._http").warning("unauthenticated requests")
+    logging.getLogger("piper.download_voices").info("Downloaded: x")
+    warnings.warn("`local_dir_use_symlinks` is deprecated", UserWarning, stacklevel=1)
+    return models_dir / name
+
+setattr(importlib.import_module("musehost.{module}"), "{attr}", noisy_fetch)
+logged = []
+class Keep(logging.Handler):
+    def emit(self, record):
+        logged.append(record.getMessage())
+logging.getLogger().addHandler(Keep(level=logging.DEBUG))
+logging.getLogger().setLevel(logging.DEBUG)
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    rc = main(["--state-dir", {str(state)!r}, "{command}"])
+with open({str(result)!r}, "w") as f:
+    json.dump({{"rc": rc, "logged": logged, "warnings": [str(w.message) for w in caught]}}, f)
+"""
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    got = json.loads(result.read_text())
+    text = out.stdout + out.stderr + "\n".join(got["logged"])
+    assert got["rc"] == 0
     assert "huggingface.co" not in text and "unauthenticated" not in text
-    assert "Downloaded:" not in text and not caught
-    assert "Downloading" in out.out and " is in " in out.out
+    assert "Downloaded:" not in text and got["warnings"] == []
+    assert "Downloading" in out.stdout and " is in " in out.stdout
 
 
 def test_quiet_downloads_holds_even_after_the_hub_library_sets_its_own_level():
