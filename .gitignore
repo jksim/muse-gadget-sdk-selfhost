@@ -27,7 +27,7 @@ muse-simulator.ppm
 
 # Self-hosted Muse: serial logs, and specs/plans kept local, never committed
 /logs/
-/planning/
+/.claude-work/
 /tasks/
 /SPEC*.md
 /CAPABILITY-MAP.md
