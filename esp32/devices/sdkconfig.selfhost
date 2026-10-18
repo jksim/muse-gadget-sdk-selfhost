@@ -21,3 +21,6 @@
 CONFIG_HOMEHUB_TUNNEL=n
 # Speak replies: the host synthesises them (POST /tts on the chat session).
 CONFIG_MUSE_TTS_PATH="/tts"
+# Self-host gadgets never talk to Muse's servers, so no SDK token is needed:
+# don't warn about its absence on every build.
+CONFIG_GADGET_SDK_TOKEN_WARN=n

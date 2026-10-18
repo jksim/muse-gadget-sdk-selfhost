@@ -18,13 +18,13 @@ import json
 
 from certs import make_pki
 
-from musegadget import cli
+from musegadget import pair
 from musegadget.ble_setup import Credentials
 
 VMS = [{"vm_url": "wss://h/", "vm_auth_token": "t", "vm_name": "home", "vm_id": "home",
         "is_default": True}]
 RECORD_KEYS = {"access_token", "refresh_token", "token_type", "username", "api_url",
-               "api_url_v2", "noise_host", "access_token_saved_at"}
+               "api_url_v2", "noise_host", "access_token_saved_at", "sdk_token_hint"}
 
 
 def credentials(**trust) -> Credentials:
@@ -41,8 +41,8 @@ def verify_and_save(creds, tmp_path, monkeypatch) -> tuple[list, dict]:
         calls.append(kwargs)
         return VMS, 200
 
-    monkeypatch.setattr(cli.muse_api, "fetch_vms_with_status", fetch)
-    cli._verify_and_save(creds, lambda save: save())
+    monkeypatch.setattr(pair.muse_api, "fetch_vms_with_status", fetch)
+    pair._verify_and_save(creds, lambda save: save())
     return calls, json.loads((tmp_path / "pairing.json").read_text())
 
 

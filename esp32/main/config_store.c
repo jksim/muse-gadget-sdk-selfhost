@@ -164,6 +164,7 @@ bool config_clear_pairing(void) {
         "auth_token",
         "vm_url",
         "username",
+        "pair_sdk_hint",
     };
     bool cleared = clear_and_verify(keys, sizeof(keys) / sizeof(keys[0]));
     host_trust_reload();  // the CA and Noise pin go with the pairing
@@ -182,6 +183,7 @@ bool config_clear_setup(void) {
         "auth_token",
         "vm_url",
         "username",
+        "pair_sdk_hint",
         "ssid",
         "password",
         "wifi_channel",
