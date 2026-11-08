@@ -41,7 +41,7 @@ jobs:
   build:
     name: Build ${{ matrix.board }}
     runs-on: ubuntu-latest
-    container: espressif/idf:v6.0.1
+    container: espressif/idf:v6.0.3
     strategy:
       fail-fast: true
       matrix:

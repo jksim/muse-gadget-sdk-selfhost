@@ -63,7 +63,7 @@ class ProvisionedTrustContractTest(unittest.TestCase):
     def test_invalid_trust_is_refused_before_provisioning_starts(self) -> None:
         handler = self.ble[self.ble.index('strcmp(act, "provision_v2") == 0) {') :]
         check = handler.index("provision_trust_error(root)")
-        self.assertLess(check, handler.index("xTaskCreate(provision_task"))
+        self.assertLess(check, handler.index("helper_task_create(provision_task"))
         self.assertLess(check, handler.index("calloc(1, sizeof(*a))"))
         body = _function_body(self.ble, "static const char *provision_trust_error(")
         self.assertIn('"ca_cert"', body)

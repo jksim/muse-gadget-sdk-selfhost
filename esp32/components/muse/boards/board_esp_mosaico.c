@@ -44,6 +44,7 @@
 
 #include <string.h>
 
+#include "bq27220.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
@@ -60,6 +61,7 @@
 #include "esp_lv_adapter.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "i2c_bus.h"
 
 #include "muse_audio.h"
 #include "muse_board.h"
@@ -71,6 +73,7 @@ static const char *TAG = "board";
 #define LCD_RES 480
 #define LCD_HOST SPI2_HOST
 #define LCD_CS GPIO_NUM_50
+#define LCD_TE GPIO_NUM_43
 #define LCD_D0 GPIO_NUM_36
 #define LCD_D1 GPIO_NUM_51
 #define LCD_D2 GPIO_NUM_35
@@ -97,6 +100,12 @@ static const char *TAG = "board";
 #define GAUGE_VOLTAGE 0x08              /* mV */
 #define GAUGE_CURRENT 0x0C              /* mA, signed, negative discharging */
 #define GAUGE_SOC 0x2C                  /* % */
+#define GAUGE_STATUS 0x0A               /* BatteryStatus */
+#define GAUGE_REMAINING 0x10            /* mAh */
+#define GAUGE_FULL 0x12                 /* FullChargeCapacity, mAh */
+#define GAUGE_DESIGN 0x3C               /* DesignCapacity, mAh */
+#define GAUGE_OPSTATUS 0x3A             /* OperationStatus */
+#define GAUGE_OP_CFGUPDATE 0x0400       /* OperationStatus: in CONFIG UPDATE */
 
 typedef struct {
     gpio_num_t i2c_sda, i2c_scl, lcd_scl, lcd_rst, codec_en;
@@ -108,6 +117,8 @@ static const pins_t *s_pins = &s_v1_2;
 
 static i2c_master_bus_handle_t s_i2c;
 static i2c_master_dev_handle_t s_gauge;
+static volatile bool s_gauge_ready;   /* its profile check has finished (or failed) */
+static void gauge_task(void *arg);
 static esp_lcd_panel_io_handle_t s_io;
 static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_touch_handle_t s_tp;
@@ -124,6 +135,7 @@ static const co5300_lcd_init_cmd_t s_lcd_init[] = {
     {0xFE, (uint8_t[]){0x00}, 1, 0},
     {0xC4, (uint8_t[]){0x80}, 1, 0},
     {0x3A, (uint8_t[]){0x55}, 1, 0},
+    {0x35, (uint8_t[]){0x00}, 1, 0},   /* tearing effect on (V-blank), GPIO43: muse_lcd_bands_set_te */
     {0x53, (uint8_t[]){0x20}, 1, 0},
     {0x51, (uint8_t[]){0xFF}, 1, 0},
     {0x63, (uint8_t[]){0xFF}, 1, 0},
@@ -190,6 +202,10 @@ static esp_err_t init(void)
     };
     if (i2c_master_probe(s_i2c, GAUGE_ADDR, 50) == ESP_OK) {
         i2c_master_bus_add_device(s_i2c, &gauge, &s_gauge);
+        if (xTaskCreate(gauge_task, "gauge", 4096, NULL, 2, NULL) != pdPASS) {
+            ESP_LOGW(TAG, "gauge: couldn't start its profile check: the percentage may be wrong");
+            s_gauge_ready = true;
+        }
     } else {
         ESP_LOGW(TAG, "fuel gauge not found: battery status disabled");
     }
@@ -260,6 +276,7 @@ static lv_display_t *display_start(lv_indev_t **touch)
         return NULL;
     }
     lv_display_add_event_cb(disp, round_area, LV_EVENT_INVALIDATE_AREA, NULL);
+    muse_lcd_bands_set_te(LCD_TE);
 
     /* Touch: the BSP's CST9220 setup, at its base orientation (no swap or mirror). */
     const esp_lcd_touch_config_t tp_cfg = {
@@ -382,9 +399,90 @@ static esp_err_t gauge_read(uint8_t reg, uint16_t *out)
     return ESP_OK;
 }
 
+/*
+ * The BQ27220 keeps its battery profile (capacities, end-of-discharge
+ * voltages, the discharge curve) in RAM only: after its own reset (the cell
+ * run flat, or disconnected) it gauges with TI's default 3000 mAh profile.
+ * The Mosaico's cell is 80 mAh, so its percentage then barely moves: the
+ * charge an 80 mAh cell takes or gives is under 3% of 3000 mAh, and the
+ * reading stays wherever the gauge started (10% at a full 4.14 V on 10/23,
+ * 100% after a reset with the cell charged). Espressif's BSP programs its
+ * profile at every boot (onboard/battery.c); Muse drives the gauge itself,
+ * so it does the same, with the same profile: the BSP's interim fixed-EDV
+ * profile, characterized on two 80 mAh cells at 25 C (Apache-2.0,
+ * Espressif). bq27220_create() checks the gauge's copy first and writes only
+ * on a mismatch; sealing takes a few seconds, so it runs off the boot path.
+ */
+static const parameter_cedv_t s_cedv = {
+    .full_charge_cap = 80, .design_cap = 80, .reserve_cap = 0, .near_full = 5, .self_discharge_rate = 20,
+    .EDV0 = 3000, .EDV1 = 3410, .EDV2 = 3530, .EMF = 3670,
+    .C0 = 115, .R0 = 968, .T0 = 4547, .R1 = 4764, .TC = 11, .C1 = 0,
+    .DOD0 = 4147, .DOD10 = 4002, .DOD20 = 3969, .DOD30 = 3938, .DOD40 = 3880, .DOD50 = 3824,
+    .DOD60 = 3794, .DOD70 = 3753, .DOD80 = 3677, .DOD90 = 3574, .DOD100 = 3490,
+};
+static const gauging_config_t s_gauging = {
+    .CCT = true, .SC = true, .FCC_LIM = true, .FC_FOR_VDQ = true, .IGNORE_SD = true,
+};
+
+static void gauge_log(const char *when)
+{
+    uint16_t design = 0, full = 0, rem = 0, soc = 0, mv = 0, ma = 0, st = 0;
+    gauge_read(GAUGE_DESIGN, &design);
+    gauge_read(GAUGE_FULL, &full);
+    gauge_read(GAUGE_REMAINING, &rem);
+    gauge_read(GAUGE_SOC, &soc);
+    gauge_read(GAUGE_VOLTAGE, &mv);
+    gauge_read(GAUGE_CURRENT, &ma);
+    gauge_read(GAUGE_STATUS, &st);
+    ESP_LOGI(TAG, "gauge %s: design %u mAh, full %u mAh, remaining %u mAh, %u%%, %u mV, %d mA, status 0x%04x", when,
+             design, full, rem, soc, mv, (int16_t)ma, st);
+}
+
+static void gauge_task(void *arg)
+{
+    (void)arg;
+    gauge_log("as found");
+    /* A restart in the middle of an earlier update can leave the gauge in
+     * CONFIG UPDATE, not gauging, until its own timeout (about 4 minutes); and
+     * a profile that matches is then never re-initialized. Leave it first,
+     * re-initialized (TI allows this sealed or not), then check as usual. */
+    uint16_t op = 0;
+    if (gauge_read(GAUGE_OPSTATUS, &op) == ESP_OK && (op & GAUGE_OP_CFGUPDATE)) {
+        ESP_LOGW(TAG, "gauge: left in CONFIG UPDATE by an interrupted update: leaving it");
+        const uint8_t exit_reinit[] = { 0x00, 0x91, 0x00 };   /* Control(EXIT_CFG_UPDATE_REINIT) */
+        if (i2c_master_transmit(s_gauge, exit_reinit, sizeof exit_reinit, 50) == ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
+    }
+    const i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = s_pins->i2c_sda,
+        .scl_io_num = s_pins->i2c_scl,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = 100000,
+    };
+    /* Wraps the bus init() made. Never i2c_bus_delete() it: that would delete
+     * the shared bus; bq27220_delete() removes only its own device. */
+    i2c_bus_handle_t bus = i2c_bus_create(I2C_NUM_0, &conf);
+    const bq27220_config_t c = { .i2c_bus = bus, .cfg = &s_gauging, .cedv = &s_cedv };
+    bq27220_handle_t bq = bus ? bq27220_create(&c) : NULL;
+    if (bq) {
+        gauge_log("with the 80 mAh profile");
+        bq27220_delete(bq);
+    } else {
+        ESP_LOGW(TAG, "gauge: couldn't check or program its battery profile: the percentage may be wrong");
+    }
+    s_gauge_ready = true;
+    vTaskDelete(NULL);
+}
+
 static esp_err_t read_power(muse_power_t *out)
 {
     ESP_RETURN_ON_FALSE(s_gauge, ESP_ERR_NOT_SUPPORTED, TAG, "no gauge");
+    if (!s_gauge_ready) {
+        return ESP_ERR_INVALID_STATE;   /* its profile is being checked: the percentage isn't right yet */
+    }
     uint16_t mv, soc, ma;
     ESP_RETURN_ON_ERROR(gauge_read(GAUGE_VOLTAGE, &mv), TAG, "voltage");
     ESP_RETURN_ON_ERROR(gauge_read(GAUGE_SOC, &soc), TAG, "soc");
@@ -426,6 +524,7 @@ static const muse_board_t s_board = {
     .display_unlock = esp_lv_adapter_unlock,
     .set_brightness = set_brightness,
     .panel_sleep = panel_sleep,
+    .draw_frame = muse_lcd_bands_frame,
     .audio_init = audio_init,
     .mic_slot = 0,
     .poll_buttons = poll_buttons,
