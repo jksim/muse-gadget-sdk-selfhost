@@ -80,7 +80,8 @@ jobs:
       matrix:
         include:
           - name: Linux
-            os: ubuntu-latest
+            # LVGL's lv_pthread.c doesn't build with Ubuntu 26.04's GCC (usleep).
+            os: ubuntu-24.04
             sanitizers: "ON"
           - name: macOS (Apple silicon)
             os: macos-latest
