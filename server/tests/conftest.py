@@ -98,6 +98,13 @@ def live(state):
 
 
 @pytest.fixture(autouse=True)
+def self_host_gadget(monkeypatch):
+    """The simulated gadgets run the SDK's Linux code. Like our self-host firmware
+    build, they must accept this host's addresses (upstream #505, #507)."""
+    monkeypatch.setenv("MUSEGADGET_CUSTOM_SERVER_HOSTS", "1")
+
+
+@pytest.fixture(autouse=True)
 def short_admin_socket(monkeypatch):
     """AF_UNIX paths are limited to ~107 bytes; pytest's tmp paths can get close."""
     import shutil

@@ -165,6 +165,10 @@ bool config_clear_pairing(void) {
         "vm_url",
         "username",
         "pair_sdk_hint",
+        "node_id",   // goes with the tokens it names
+#if CONFIG_MUSE_AVATAR_SYNC
+        "avatar_vm",
+#endif
     };
     bool cleared = clear_and_verify(keys, sizeof(keys) / sizeof(keys[0]));
     host_trust_reload();  // the CA and Noise pin go with the pairing
@@ -191,11 +195,16 @@ bool config_clear_setup(void) {
         "vm_url",
         "username",
         "pair_sdk_hint",
+        "node_id",
+#if CONFIG_MUSE_AVATAR_SYNC
+        "avatar_vm",
+#endif
         "ssid",
         "password",
         "wifi_channel",
         "wifi_others",
         "wifi_hidden",
+        "wifi_proxy",
         "setup_complete",
     };
     bool cleared = clear_and_verify(keys, sizeof(keys) / sizeof(keys[0]));
@@ -216,6 +225,10 @@ bool config_is_provisioned(void) {
     }
     nvs_close(h);
     return err == ESP_OK && len > 1;
+}
+
+bool config_get_node_id(char *out, size_t size) {
+    return config_get_str("node_id", out, size) && out[0];
 }
 
 bool config_setup_complete(void) {

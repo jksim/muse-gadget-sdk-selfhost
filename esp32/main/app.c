@@ -30,7 +30,7 @@
 #include "cJSON.h"
 
 #include "esp_heap_caps.h"
-#if CONFIG_MUSE_WATCHER_CAMERA || CONFIG_MUSE_P4_CSI_CAMERA
+#if CONFIG_MUSE_WATCHER_CAMERA || CONFIG_MUSE_P4_CSI_CAMERA || CONFIG_MUSE_MOSAICO_CAMERA
 #include "freertos/idf_additions.h"
 #endif
 #include "esp_timer.h"
@@ -44,10 +44,17 @@
 
 #include "identity.h"
 #include "host_trust.h"
+#if CONFIG_GADGET_SDK_TOKEN_CONSOLE
 #include "sdk_token_console.h"
+#endif
+#if CONFIG_MUSE_WASM_APPS
+#include "muse_apps.h"
+#endif
+#include "token_fp.h"
 #include "config_store.h"
 #include "wifi_mgr.h"
 #include "wifi_known.h"
+#include "network_proxy_tls.h"
 #include "customer_product_info.h"
 #include "ble_coex.h"
 #if CONFIG_HOMEHUB_BLE_COMMANDS
@@ -64,11 +71,13 @@
 #include "led_status.h"
 #include "button.h"
 #include "tunnel_netif.h"
+#include "tunnel_relay.h"
 #include "net_discovery.h"
 #include "ota.h"
 #include "link_pairing.h"
 #include "bug_report.h"
 #include "diagnostic_log.h"
+#include "error_report.h"
 #if CONFIG_HOMEHUB_VOICE
 #include "voice.h"
 #endif
@@ -79,7 +88,8 @@
 #include "reterminal_sht4x.h"
 #endif
 #if CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_UC8179 || \
-    CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_SPECTRA6
+    CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_SPECTRA6 || \
+    CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_IT8951
 #include "reterminal_battery.h"
 #endif
 #if CONFIG_HOMEHUB_WAVESHARE_154G_SHTC3
@@ -91,10 +101,14 @@
 #elif CONFIG_MUSE_P4_CSI_CAMERA
 #include "boards/p4_csi_camera.h"
 #define camera_capture_base64 p4_csi_camera_capture
+#elif CONFIG_MUSE_MOSAICO_CAMERA
+#include "boards/mosaico_camera.h"
+#define camera_capture_base64 mosaico_camera_capture
 #endif
 #if CONFIG_MUSE_ENABLED
 #include "muse_glue.h"
 #include "muse_input.h"
+#include "muse_wakeword_glue.h"
 // Muse joins Wi-Fi from its own settings, before or without pairing.
 #define WIFI_WITHOUT_PAIRING 1
 #else
@@ -115,6 +129,7 @@ static const char *HEARTBEAT_TAG = "link.heartbeat";
 #define WIFI_JOIN_TRY_MIN_MS    8000    // each one's share of the timeout, at least
 #define WIFI_JOIN_SCAN_MAX      40      // as many networks as a scan reports
 #define WIFI_QUICK_MIN_RSSI     (-75)   // near enough to join without a full scan
+#define WIFI_REJOIN_MS          12000   // straight to the cached access point, then the probe
 #define MAX_SCAN_RESULTS        25
 #define TOKEN_BUF_BYTES         2048
 #define VM_AUTH_REFRESH_RETRY_INTERVAL_US (60LL * 1000000LL)
@@ -134,8 +149,8 @@ static const char *HEARTBEAT_TAG = "link.heartbeat";
 // OTA rollback: how long a freshly-installed (PENDING_VERIFY) image has to
 // reach the authenticated control WebSocket before the bootloader reverts it
 // (on every board; on the ESP-Mosaico, not for a Vibe Mode install).
-// The control WS is the recovery channel — if a new image can't reach it,
-// no future device.ota could repair the device, so rolling back is correct.
+// An image that can't reach the control WS can't reach Muse at all, so
+// rolling back is correct.
 #define OTA_VERIFY_TIMEOUT_US (300LL * 1000000LL)
 
 // Static IPs for the raw L3 tunnel. ESP side hosts .1; VM side .2.
@@ -170,7 +185,13 @@ static bool s_ble_started = false;
 static bool s_ota_pending_verify = false;
 static uint32_t s_confirm_generation = 0;
 static uint32_t s_confirm_session_generation = 0;
-static TaskHandle_t s_confirm_timeout_task = NULL;
+// The setup confirmation's two timeouts (the press window, then the confirmed
+// session's idle limit) are one-shot esp_timers, not tasks that sleep them out:
+// that kept a 4 KB stack parked through every setup.
+typedef enum { CONFIRM_TO_NONE, CONFIRM_TO_PRESS, CONFIRM_TO_IDLE } confirm_to_t;
+static esp_timer_handle_t s_confirm_timer;
+static confirm_to_t s_confirm_to = CONFIRM_TO_NONE;   // under the setup window lock
+static uint32_t s_confirm_to_generation;
 #if CONFIG_MUSE_ENABLED
 static volatile bool s_muse_napping = false;   // app_wifi_nap(), or no network nearby, until the next join
 static volatile bool s_muse_resume_vm = false;  // napped with a VM session: resume it
@@ -241,24 +262,35 @@ static void setup_window_lock_give(void) {
 }
 
 static uint32_t advance_confirm_generation_locked(void) {
-    if (s_confirm_timeout_task) {
-        // The waiter owns no resources until it clears this handle under
-        // the same lock after its delay.
-        helper_task_delete(s_confirm_timeout_task);
-        s_confirm_timeout_task = NULL;
+    if (s_confirm_to != CONFIRM_TO_NONE) {
+        esp_timer_stop(s_confirm_timer);   // the generation check guards a callback already running
+        s_confirm_to = CONFIRM_TO_NONE;
     }
     return ++s_confirm_generation;
 }
 
-static BaseType_t start_confirm_timeout(TaskFunction_t task, const char *name,
-                                        uint32_t generation, uint32_t session_generation) {
+static void confirm_timer_fire(void *arg);
+
+static BaseType_t start_confirm_timeout(confirm_to_t kind, uint32_t generation, uint32_t session_generation) {
     setup_window_lock_take();
     BaseType_t rc = pdPASS;
     if (s_confirm_generation == generation
         && link_pairing_session_is_current(session_generation)) {
         s_confirm_session_generation = session_generation;
-        rc = helper_task_create(task, name, 4096, (void *)(uintptr_t)generation, 4,
-                                &s_confirm_timeout_task);
+        if (!s_confirm_timer) {
+            const esp_timer_create_args_t t = { .callback = confirm_timer_fire, .name = "pair_to" };
+            if (esp_timer_create(&t, &s_confirm_timer) != ESP_OK) rc = pdFAIL;
+        }
+        if (rc == pdPASS) {
+            uint32_t ms = kind == CONFIRM_TO_PRESS ? PAIRING_CONFIRM_WINDOW_MS : PAIRING_CONFIRMED_IDLE_TIMEOUT_MS;
+            esp_timer_stop(s_confirm_timer);
+            s_confirm_to = kind;
+            s_confirm_to_generation = generation;
+            if (esp_timer_start_once(s_confirm_timer, (uint64_t)ms * 1000) != ESP_OK) {
+                s_confirm_to = CONFIRM_TO_NONE;
+                rc = pdFAIL;
+            }
+        }
     }
     setup_window_lock_give();
     return rc;
@@ -266,7 +298,6 @@ static BaseType_t start_confirm_timeout(TaskFunction_t task, const char *name,
 
 static void open_setup_window(const char *reason);
 static void heap_snapshot(const char *label);
-static void confirmed_idle_timeout_task(void *arg);
 
 // ---- Helpers ---------------------------------------------------------------
 
@@ -522,6 +553,24 @@ static app_wifi_join_t join_saved_networks(int timeout_ms, join_mode_t mode,
         goto done;
     }
 
+    // Rejoining the network it was on (after a drop): straight to the
+    // access point cached at that join (wifi_mgr_has_cached_ap), without
+    // probing its channel first, if it was last heard (at the join, or as the
+    // link dropped) at the probe's floor or better: on a mesh, a weak one
+    // probes for a nearer node. A miss drops the cache
+    // (wifi_mgr_connect), and the probe and the scan below follow. The cap
+    // leaves time for a slow DHCP: a shorter one re-triggered the connect
+    // while DHCP was still running.
+    if (mode == JOIN_ANY && wifi_mgr_has_cached_ap(list->nets[0].ssid, WIFI_QUICK_MIN_RSSI)) {
+        restore_wifi_channel_hint(list->nets[0].ssid);
+        // Neither tries nor tried[]: the probe and the scan below count what
+        // they find, so a miss away from home is still "not nearby", and the
+        // scan may still find this network through another access point.
+        int ms = join_ms_left(deadline) / 2;
+        ok = join_saved_network(list, 0, ms < WIFI_REJOIN_MS ? ms : WIFI_REJOIN_MS, led, -1, joined);
+        if (ok) goto done;
+    }
+
     channel = saved_wifi_channel(list->nets[0].ssid);
     if (channel && mode == JOIN_ANY) {
         // A probe on one channel takes a moment; a full scan takes seconds.
@@ -685,7 +734,7 @@ static void setup_fail_for_session(const char *stage, const char *status,
         }
         uint32_t generation = advance_confirm_generation_locked();
         setup_window_lock_give();
-        start_confirm_timeout(confirmed_idle_timeout_task, "pair_idle_to", generation,
+        start_confirm_timeout(CONFIRM_TO_IDLE, generation,
                               session_generation != 0 ? session_generation
                                   : link_pairing_session_generation());
     } else if (session_generation != 0) {
@@ -843,11 +892,14 @@ static void defer_unpair_after_revocation(void) {
     atomic_store_explicit(&s_unpair_pending, true, memory_order_release);
 }
 
+// node_id: the id the tokens are for: identity_node_id(), except in setup,
+// which mints for the id it offers (identity_setup_node_id()).
 static bool mint_and_store_device_tokens_unlocked(const char *source_token,
                                                   const char *username,
+                                                  const char *node_id,
                                                   bool *revoked) {
     vm_device_tokens_t tokens = {0};
-    int rc = vm_api_mint_device_token(source_token, identity_node_id(), &tokens);
+    int rc = vm_api_mint_device_token(source_token, node_id, &tokens);
     if (rc == 0) {
         bool ok = store_token_pair_unlocked(tokens.access_token, tokens.refresh_token);
         if (ok) identity_note_paired_sdk_token();
@@ -873,7 +925,12 @@ static bool accept_pairing_credentials(const char *access_token,
     if (!access_token || !*access_token) return false;
     auth_lock_take();
     bool ok = false;
-    if (refresh_token && *refresh_token) {
+    // The node id device_info offered, which the app's tokens are for, goes
+    // with them: stored first, so no tokens from this setup are ever kept
+    // without it (a failed setup clears both).
+    if (!config_set_str("node_id", identity_setup_node_id())) {
+        ESP_LOGW(TAG, "could not store the node id");
+    } else if (refresh_token && *refresh_token) {
         ok = store_token_pair_unlocked(access_token, refresh_token);
         if (ok) {
             identity_note_paired_sdk_token();
@@ -884,9 +941,16 @@ static bool accept_pairing_credentials(const char *access_token,
         ok = false;
     } else {
         ESP_LOGI(TAG, "no refresh_token supplied; minting device token pair");
-        ok = mint_and_store_device_tokens_unlocked(access_token, username, NULL);
+        ok = mint_and_store_device_tokens_unlocked(access_token, username,
+                                                   identity_setup_node_id(), NULL);
     }
     auth_lock_give();
+    // From here the device goes by the new setup's id (a device set up by
+    // earlier firmware leaves its homelink- id behind with its old tokens).
+    if (ok && identity_refresh_node_id()) {
+        ESP_LOGI(TAG, "node id is now %s", identity_node_id());
+        noise_ctrl_set_node_id(identity_node_id());
+    }
     return ok;
 }
 
@@ -906,7 +970,7 @@ static bool migrate_legacy_auth_token_locked(bool *revoked) {
         return false;
     }
     ESP_LOGI(TAG, "migrating legacy auth_token to device token pair");
-    bool ok = mint_and_store_device_tokens_unlocked(legacy, NULL, revoked);
+    bool ok = mint_and_store_device_tokens_unlocked(legacy, NULL, identity_node_id(), revoked);
     free(legacy);
     return ok;
 }
@@ -959,7 +1023,7 @@ static bool ensure_access_token_ready_with_gate_held(
     if (!refresh) {
         if (vm_auth_backoff_active_unlocked()) goto done;
         ESP_LOGI(TAG, "access_token has no refresh_token; minting device pair");
-        ok = mint_and_store_device_tokens_unlocked(access, NULL, &revoked);
+        ok = mint_and_store_device_tokens_unlocked(access, NULL, identity_node_id(), &revoked);
         goto done;
     }
 
@@ -1251,6 +1315,26 @@ static bool store_host_trust(const char *ca_cert, const char *noise_static_pub) 
     return ca_saved && key_saved;
 }
 
+// Save and apply the endpoints setup sent. on_provision calls this only once
+// that setup's credentials are stored, so hosts are saved only with stored
+// credentials and refused ones never bring in new hosts. A failure here wipes
+// the credentials and any hosts saved (setup_fail_for_session).
+static bool save_setup_endpoints(const char *api_url, const char *api_url_v2,
+                                 const char *noise_host) {
+    // Only older firmware reads api_url. Keep it current so a device flashed
+    // back to that firmware still reaches the API it was paired with.
+    bool api_saved = api_url && *api_url
+        ? config_set_str("api_url", api_url) : config_erase_key("api_url");
+    bool api_v2_saved = api_url_v2 && *api_url_v2
+        ? config_set_str("api_url_v2", api_url_v2) : config_erase_key("api_url_v2");
+    bool noise_saved = noise_host && *noise_host
+        ? config_set_str("noise_host", noise_host) : config_erase_key("noise_host");
+    if (!api_saved || !api_v2_saved || !noise_saved) return false;
+    vm_api_set_base_url(api_url_v2);
+    noise_ctrl_set_host(noise_host);
+    return true;
+}
+
 static void on_provision(const char *ssid, const char *password,
                          const char *access_token,
                          const char *refresh_token,
@@ -1262,6 +1346,7 @@ static void on_provision(const char *ssid, const char *password,
                          const char *noise_host,
                          const char *ca_cert,
                          const char *noise_static_pub,
+                         const network_proxy_config_t *proxy,
                          uint32_t session_generation) {
     if (session_generation == 0) return;
     if (!operation_gate_take(0, "BLE provision")) {
@@ -1289,23 +1374,15 @@ static void on_provision(const char *ssid, const char *password,
     ui_set_status("wifi_connected");
     led_status_set_state(LED_STATE_WIFI_CONNECTED);
     remember_joined_wifi(ssid, password);
+    if (proxy) {
+        if (!wifi_known_set_proxy(ssid, proxy)) {
+            setup_fail_for_session("storage", "error_storage", session_generation);
+            goto done;
+        }
+        network_proxy_set_active(proxy);
+    }
     persist_connected_wifi_channel();
     config_erase_key("vm_url");
-
-    // Only older firmware reads api_url. Keep it current so a device flashed
-    // back to that firmware still reaches the API it was paired with.
-    bool api_saved = api_url && *api_url
-        ? config_set_str("api_url", api_url) : config_erase_key("api_url");
-    bool api_v2_saved = api_url_v2 && *api_url_v2
-        ? config_set_str("api_url_v2", api_url_v2) : config_erase_key("api_url_v2");
-    bool noise_saved = noise_host && *noise_host
-        ? config_set_str("noise_host", noise_host) : config_erase_key("noise_host");
-    if (!api_saved || !api_v2_saved || !noise_saved) {
-        setup_fail_for_session("storage", "error_storage", session_generation);
-        goto done;
-    }
-    vm_api_set_base_url(api_url_v2);
-    noise_ctrl_set_host(noise_host);
 
     if (!require_provisioning_pairing_session(session_generation)) goto done;
     // Before the first call to the host, so it already trusts the host's CA.
@@ -1316,6 +1393,10 @@ static void on_provision(const char *ssid, const char *password,
     setup_stage_set("auth");
     if (!accept_pairing_credentials(access_token, refresh_token, username)) {
         setup_fail_for_session("auth", "auth_failed", session_generation);
+        goto done;
+    }
+    if (!save_setup_endpoints(api_url, api_url_v2, noise_host)) {
+        setup_fail_for_session("storage", "error_storage", session_generation);
         goto done;
     }
 
@@ -1451,6 +1532,9 @@ static void on_wifi_scan(void) {
 }
 
 static void set_vm_with_gate_held(const char *url) {
+#if CONFIG_MUSE_WASM_APPS
+    muse_apps_vm_changed();  // an app the last VM ran doesn't act on the next one
+#endif
     ble_server_send_status("vm_switching");
     ui_set_status("vm_switching");
     led_status_set_state(LED_STATE_VM_SWITCHING);
@@ -1498,6 +1582,9 @@ static void finish_setup_reset_with_gate_held(void) {
     led_status_set_state(LED_STATE_UNPAIRED);
     ble_server_send_status("unpaired");
     link_pairing_reset();
+#if CONFIG_MUSE_WASM_APPS
+    muse_apps_forget_all();  // the next owner doesn't get the last one's apps
+#endif
 }
 
 static bool reset_setup_with_gate_held(const char *source,
@@ -1511,6 +1598,11 @@ static bool reset_setup_with_gate_held(const char *source,
         ble_server_send_status("error_storage");
         return false;
     }
+#if CONFIG_HOMEHUB_ERROR_REPORT
+    // A factory reset forgets everything, and the device may change hands.
+    // The wipe has stopped the control task, so nothing is sending it.
+    if (scope == SETUP_RESET_FORGET_WIFI) error_report_discard();
+#endif
     finish_setup_reset_with_gate_held();
     return true;
 }
@@ -1539,7 +1631,8 @@ static void on_get_device_info(void) {
     const esp_app_desc_t *desc = esp_app_get_description();
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "type", "device_info");
-    cJSON_AddStringToObject(root, "node_id", identity_node_id());
+    // The id a setup on this connection takes (identity.h).
+    cJSON_AddStringToObject(root, "node_id", identity_setup_node_id());
     cJSON_AddStringToObject(root, "version", desc ? desc->version : "unknown");
     link_pairing_add_device_info(root);
     char build_sha[17] = {0};
@@ -1616,10 +1709,24 @@ typedef struct {
     cJSON *params;
 } discover_task_args_t;
 
+// One scan at a time: a second scan's mDNS socket on 5353 would take the
+// replies meant for the first.
+static atomic_bool s_discover_running = ATOMIC_VAR_INIT(false);
+
+static bool discover_try_begin(void) {
+    return !atomic_exchange_explicit(&s_discover_running, true, memory_order_acq_rel);
+}
+
+static void discover_end(void) {
+    atomic_store_explicit(&s_discover_running, false, memory_order_release);
+}
+
 static void discover_task(void *arg) {
     discover_task_args_t *args = (discover_task_args_t *)arg;
     ESP_LOGI(TAG, "starting network discovery scan");
     cJSON *result = net_discovery_run(args->params);
+    // The scan's sockets are closed: a scan sent once this result arrives can run.
+    discover_end();
     cJSON *wrapper = result ? cJSON_CreateObject() : NULL;
     if (!wrapper || !cJSON_AddBoolToObject(wrapper, "ok", true)
         || !cJSON_AddItemToObject(wrapper, "payload", result)) {
@@ -1643,7 +1750,16 @@ static void discover_task(void *arg) {
     if (args->params) cJSON_Delete(args->params);
     free(args);
     stack_monitor_record(NULL);
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
+}
+
+// The scan's 8 KB stack in PSRAM where there is any: in internal RAM it was the
+// largest part of the scan's peak. The task writes no flash.
+static bool start_discover_task(discover_task_args_t *args) {
+    return xTaskCreateWithCaps(discover_task, "discover", 8192, args, 4, NULL,
+                               MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) == pdPASS
+        || xTaskCreateWithCaps(discover_task, "discover", 8192, args, 4, NULL,
+                               MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) == pdPASS;
 }
 #endif
 
@@ -1677,7 +1793,7 @@ static void draw_url_done(const image_fetch_result_t *r, void *user) {
 }
 #endif
 
-#if CONFIG_MUSE_WATCHER_CAMERA || CONFIG_MUSE_P4_CSI_CAMERA
+#if CONFIG_MUSE_WATCHER_CAMERA || CONFIG_MUSE_P4_CSI_CAMERA || CONFIG_MUSE_MOSAICO_CAMERA
 typedef struct {
     noise_ctrl_session_generation_t session_generation;
     char request_id[64];
@@ -1793,6 +1909,9 @@ static bool reset_setup_from_control(const char *source,
 }
 
 static void reset_default_vm_with_gate_held(void) {
+#if CONFIG_MUSE_WASM_APPS
+    muse_apps_vm_changed();
+#endif
     config_erase_key("vm_url");
     ble_server_send_status("vm_switching");
     ui_set_status("vm_switching");
@@ -1866,6 +1985,10 @@ static cJSON *queue_ws_control(ws_control_action_t action, char *url) {
                                  "failed to clear setup credentials");
         }
         args->setup_credentials_cleared = true;
+#if CONFIG_MUSE_WASM_APPS
+        // Now, not after the worker's disconnect: a failed start below reboots first.
+        muse_apps_forget_all();
+#endif
     }
 
     if (xTaskCreate(ws_control_task, "ws_control", 8192, args, 4, NULL)
@@ -1959,10 +2082,88 @@ static cJSON *bug_report_command(
 }
 #endif
 
+#if CONFIG_HOMEHUB_NET_FORWARD
+// An integer parameter from lo to hi.
+static bool int_param(cJSON *params, const char *key, int lo, int hi, int *out) {
+    cJSON *item = params ? cJSON_GetObjectItem(params, key) : NULL;
+    if (!cJSON_IsNumber(item) || !(item->valuedouble >= lo && item->valuedouble <= hi)
+        || item->valuedouble != (double)(int)item->valuedouble) {
+        return false;
+    }
+    *out = (int)item->valuedouble;
+    return true;
+}
+
+// net.forward (docs/home-link-network.md): a LAN port of this device to a VM
+// port, for ttl_s seconds.
+static cJSON *net_forward_command(cJSON *params) {
+    cJSON *proto = params ? cJSON_GetObjectItem(params, "proto") : NULL;
+    const char *name = cJSON_IsString(proto) ? proto->valuestring : NULL;
+    if (!name || (strcmp(name, "udp") != 0 && strcmp(name, "tcp") != 0)) {
+        return command_error("invalid_params", "proto must be \"udp\" or \"tcp\"");
+    }
+    int port, to_port, ttl_s;
+    if (!int_param(params, "port", 1, 49151, &port)) {
+        return command_error("invalid_params", "port must be an integer from 1 to 49151");
+    }
+    to_port = port;
+    if (cJSON_GetObjectItem(params, "to_port")
+        && !int_param(params, "to_port", 1, 65535, &to_port)) {
+        return command_error("invalid_params", "to_port must be an integer from 1 to 65535");
+    }
+    if (!int_param(params, "ttl_s", 0, 3600, &ttl_s)) {
+        return command_error("invalid_params", "ttl_s must be an integer from 0 to 3600");
+    }
+    // The whole result first: a forward is never left open behind a failure.
+    cJSON *result = cJSON_CreateObject();
+    cJSON *payload = cJSON_AddObjectToObject(result, "payload");
+    cJSON *left = payload ? cJSON_AddNumberToObject(payload, "expires_in_s", 0) : NULL;
+    if (!cJSON_AddBoolToObject(result, "ok", true) || !left
+        || !cJSON_AddStringToObject(payload, "proto", name)
+        || !cJSON_AddNumberToObject(payload, "port", port)
+        || !cJSON_AddNumberToObject(payload, "to_port", to_port)) {
+        cJSON_Delete(result);
+        return command_error("out_of_memory", "failed to build the result");
+    }
+    const char *error = "failed";
+    int seconds = tunnel_relay_forward(name[0] == 't', (uint16_t)port, (uint16_t)to_port,
+                                       (uint32_t)ttl_s, &error);
+    if (seconds < 0) {
+        cJSON_Delete(result);
+        return command_error("forward_failed", error);
+    }
+    cJSON_SetNumberValue(left, seconds);
+    return result;
+}
+#endif
+
 #if CONFIG_HOMEHUB_BLE_COMMANDS
 // ---- BLE commands' hooks (main/ble_commands.c) ----
 
 #endif  // CONFIG_HOMEHUB_BLE_COMMANDS
+
+#if CONFIG_MUSE_WAKEWORD_ENABLE
+/* Muse may only turn listening off. Turning it on is the device's own
+ * choice (Settings, the quick menu, serial), so no remote command can make
+ * the gadget start sending audio. */
+static cJSON *wakeword_disable_command(void) {
+    muse_wakeword_set_enabled(false);
+    muse_wakeword_status_t st;
+    muse_wakeword_status(&st);
+    cJSON *result = cJSON_CreateObject();
+    cJSON *payload = cJSON_CreateObject();
+    if (!result || !payload) {
+        cJSON_Delete(result);
+        cJSON_Delete(payload);
+        return command_error("out_of_memory", "failed to allocate wake word result");
+    }
+    cJSON_AddBoolToObject(payload, "enabled", st.enabled);
+    cJSON_AddBoolToObject(payload, "listening", st.listening);
+    cJSON_AddBoolToObject(result, "ok", true);
+    cJSON_AddItemToObject(result, "payload", payload);
+    return result;
+}
+#endif
 
 static cJSON *on_ws_command(
     const char *command, cJSON *params, const char *request_id,
@@ -1980,9 +2181,20 @@ static cJSON *on_ws_command(
         if (!url) return command_error("missing_param", "url is required");
         return queue_ws_control(WS_CONTROL_SET_VM, url);
     }
+#if CONFIG_MUSE_WASM_APPS
+    if (muse_apps_handles(command)) {
+        return muse_apps_command(command, params, request_id, session_generation);
+    }
+#endif
 #if CONFIG_HOMEHUB_DISPLAY_COMMANDS
     bool draw_file = strcmp(command, "display.draw_file") == 0;
-    if (draw_file || strcmp(command, "display.draw_url") == 0) {
+    int gray_levels = 0;
+#if CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_UC8179
+    if (strcmp(command, "display.draw_gray4_url") == 0) gray_levels = 4;
+#elif CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_IT8951
+    if (strcmp(command, "display.draw_gray16_url") == 0) gray_levels = 16;
+#endif
+    if (draw_file || gray_levels || strcmp(command, "display.draw_url") == 0) {
         // draw_file takes a path on the VM, fetched over this session.
         cJSON *target = cJSON_GetObjectItem(params, draw_file ? "path" : "url");
         cJSON *row = cJSON_GetObjectItem(params, "row");
@@ -1990,15 +2202,28 @@ static cJSON *on_ws_command(
             return command_error("missing_param",
                                  draw_file ? "path is required" : "url is required");
         }
+        if (gray_levels && row && (!cJSON_IsNumber(row) ||
+                                  row->valuedouble != row->valueint)) {
+            return command_error("invalid_params", "row must be an integer");
+        }
         draw_url_ctx_t *ctx = calloc(1, sizeof(*ctx));
         if (!ctx) return command_error("out_of_memory", "failed to allocate");
         ctx->session_generation = session_generation;
         strncpy(ctx->request_id, request_id, sizeof(ctx->request_id) - 1);
         const char *code, *message;
         int top = cJSON_IsNumber(row) ? row->valueint : IMAGE_FETCH_DEFAULT_ROW;
-        bool started = draw_file
-            ? image_fetch_start_vm(target->valuestring, top, draw_url_done, ctx, &code, &message)
-            : image_fetch_start(target->valuestring, top, draw_url_done, ctx, &code, &message);
+        bool started;
+#if CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_UC8179 || CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_IT8951
+        if (gray_levels) {
+            started = image_fetch_start_gray(target->valuestring, top, gray_levels,
+                                             draw_url_done, ctx, &code, &message);
+        } else
+#endif
+        {
+            started = draw_file
+                ? image_fetch_start_vm(target->valuestring, top, draw_url_done, ctx, &code, &message)
+                : image_fetch_start(target->valuestring, top, draw_url_done, ctx, &code, &message);
+        }
         if (!started) {
             free(ctx);
             return command_error(code, message);
@@ -2014,7 +2239,7 @@ static cJSON *on_ws_command(
         return result;
     }
 #endif
-#if CONFIG_MUSE_WATCHER_CAMERA || CONFIG_MUSE_P4_CSI_CAMERA
+#if CONFIG_MUSE_WATCHER_CAMERA || CONFIG_MUSE_P4_CSI_CAMERA || CONFIG_MUSE_MOSAICO_CAMERA
     if (strcmp(command, "camera.capture") == 0) {
         watcher_camera_task_args_t *args = calloc(1, sizeof(*args));
         if (!args) return command_error("out_of_memory", "failed to allocate camera request");
@@ -2050,6 +2275,11 @@ static cJSON *on_ws_command(
         return waveshare_154g_shtc3_command();
     }
 #endif
+#if CONFIG_MUSE_WAKEWORD_ENABLE
+    if (strcmp(command, "wakeword.disable") == 0) {
+        return wakeword_disable_command();
+    }
+#endif
     if (strcmp(command, "device.reset_vm") == 0) {
         return queue_ws_control(WS_CONTROL_RESET_VM, NULL);
     }
@@ -2061,17 +2291,27 @@ static cJSON *on_ws_command(
         return bug_report_command(request_id, session_generation);
     }
 #endif
+#if CONFIG_HOMEHUB_NET_FORWARD
+    if (strcmp(command, "net.forward") == 0) {
+        return net_forward_command(params);
+    }
+#endif
 #if CONFIG_HOMEHUB_TUNNEL
     if (strcmp(command, "device.discover") == 0) {
+        if (!discover_try_begin())
+            return command_error("busy", "a network scan is already running");
         discover_task_args_t *args = calloc(1, sizeof(*args));
-        if (!args) return command_error("out_of_memory", "failed to allocate");
+        if (!args) {
+            discover_end();
+            return command_error("out_of_memory", "failed to allocate");
+        }
         args->session_generation = session_generation;
         strncpy(args->request_id, request_id, sizeof(args->request_id) - 1);
         args->params = params ? cJSON_Duplicate(params, 1) : NULL;
-        if (xTaskCreate(discover_task, "discover", 8192, args, 4, NULL)
-            != pdPASS) {
+        if (!start_discover_task(args)) {
             if (args->params) cJSON_Delete(args->params);
             free(args);
+            discover_end();
             return command_error("out_of_memory", "failed to start task");
         }
         cJSON *async = cJSON_CreateObject();
@@ -2099,14 +2339,12 @@ static void enter_advertising_state(const char *reason) {
     ble_server_begin_advertising();
 }
 
+// The press window ran out (on a task of its own: confirm_timer_fire).
 static void confirm_timeout_task(void *arg) {
     uint32_t generation = (uint32_t)(uintptr_t)arg;
-    vTaskDelay(pdMS_TO_TICKS(PAIRING_CONFIRM_WINDOW_MS));
-
     setup_window_lock_take();
     bool current = s_confirm_generation == generation;
     uint32_t session_generation = current ? s_confirm_session_generation : 0;
-    if (current) s_confirm_timeout_task = NULL;
     current = current && link_pairing_session_is_current(session_generation);
     if (current) ui_set_status("pairing_confirm_timeout");
     setup_window_lock_give();
@@ -2121,14 +2359,13 @@ static void confirm_timeout_task(void *arg) {
     helper_task_delete(NULL);
 }
 
+// The confirmed session's idle limit: no provisioning in time (on a task of
+// its own: confirm_timer_fire).
 static void confirmed_idle_timeout_task(void *arg) {
     uint32_t generation = (uint32_t)(uintptr_t)arg;
-    vTaskDelay(pdMS_TO_TICKS(PAIRING_CONFIRMED_IDLE_TIMEOUT_MS));
-
     setup_window_lock_take();
     bool current = s_confirm_generation == generation;
     uint32_t session_generation = current ? s_confirm_session_generation : 0;
-    if (current) s_confirm_timeout_task = NULL;
     current = current && link_pairing_session_is_current(session_generation)
               && !link_pairing_provisioning_session_valid(0);
     if (current) ui_set_status("pairing_confirm_timeout");
@@ -2142,6 +2379,41 @@ static void confirmed_idle_timeout_task(void *arg) {
     }
     stack_monitor_record(NULL);
     helper_task_delete(NULL);
+}
+
+// On the esp_timer task, which mustn't be held up: the timeout's status send
+// waits for the BLE TX lock and paces its chunks, so it runs on a short-lived
+// task.
+static void confirm_timer_fire(void *arg) {
+    (void)arg;
+    setup_window_lock_take();
+    // A one-shot isn't active in its own callback unless it was re-armed while
+    // this one waited for the lock: that timeout isn't due yet.
+    confirm_to_t kind = esp_timer_is_active(s_confirm_timer) ? CONFIRM_TO_NONE : s_confirm_to;
+    uint32_t generation = s_confirm_to_generation;
+    if (kind != CONFIRM_TO_NONE) s_confirm_to = CONFIRM_TO_NONE;
+    setup_window_lock_give();
+    void *g = (void *)(uintptr_t)generation;
+    BaseType_t rc = pdPASS;
+    if (kind == CONFIRM_TO_PRESS) {
+        rc = helper_task_create(confirm_timeout_task, "pair_confirm_to", 4096, g, 4, NULL);
+    } else if (kind == CONFIRM_TO_IDLE) {
+        rc = helper_task_create(confirmed_idle_timeout_task, "pair_idle_to", 4096, g, 4, NULL);
+    }
+    if (rc != pdPASS) {
+        // No memory for the task: still end the session, without its status
+        // (the disconnect only queues work for NimBLE, and resets the
+        // session's keys even when it can't).
+        setup_window_lock_take();
+        bool current = s_confirm_generation == generation;
+        uint32_t session_generation = current ? s_confirm_session_generation : 0;
+        current = current && link_pairing_session_is_current(session_generation)
+                  && (kind == CONFIRM_TO_PRESS || !link_pairing_provisioning_session_valid(0));
+        if (current) ui_set_status("pairing_confirm_timeout");
+        setup_window_lock_give();
+        ESP_LOGE(TAG, "no memory for the pairing timeout's task");
+        if (current) ble_server_disconnect_pairing_session(session_generation);
+    }
 }
 
 static void notify_pairing_confirmed(uint32_t session_generation) {
@@ -2159,7 +2431,7 @@ static void notify_pairing_confirmed(uint32_t session_generation) {
     ui_set_status("pairing_confirmed");
     led_status_set_state(LED_STATE_WIFI_CONNECTING);
     setup_window_lock_give();
-    if (start_confirm_timeout(confirmed_idle_timeout_task, "pair_idle_to", generation,
+    if (start_confirm_timeout(CONFIRM_TO_IDLE, generation,
                               session_generation) != pdPASS) {
         ESP_LOGE(TAG, "failed to start confirmed-session idle timer");
         ble_server_send_pairing_status("error_pairing_unavailable", session_generation);
@@ -2192,7 +2464,7 @@ static void on_pairing_client_finished(uint32_t session_generation) {
     led_status_set_state(LED_STATE_PAIRING_CONFIRM_REQUIRED);
     setup_window_lock_give();
 
-    if (start_confirm_timeout(confirm_timeout_task, "pair_confirm_to", generation,
+    if (start_confirm_timeout(CONFIRM_TO_PRESS, generation,
                               session_generation) != pdPASS) {
         ESP_LOGE(TAG, "failed to start pairing confirmation timer");
         ble_server_send_pairing_status("error_pairing_unavailable", session_generation);
@@ -2314,10 +2586,13 @@ static void on_button_short_press(void) {
             ESP_LOGI(TAG, "button short-press ignored; no active BLE session");
             return;
         }
-        uint32_t session_generation = link_pairing_confirm_active_session();
+        uint32_t session_generation =
+            link_pairing_confirm_active_session(button_pressed_after_us());
         if (session_generation) {
             notify_pairing_confirmed(session_generation);
             ESP_LOGI(TAG, "button short-press confirmed active pairing session");
+        } else {
+            ESP_LOGI(TAG, "button short-press didn't confirm (prompt not armed or expired, or the press began before it)");
         }
         return;
     }
@@ -2337,6 +2612,49 @@ static void on_button_double_press(void) {
 static void on_button_long_press(void) {
     reset_setup_from_control("button long-press", SETUP_RESET_FORGET_WIFI);
 }
+
+#if !CONFIG_MUSE_ENABLED
+#define LINK_WIFI_RETRY_MIN_US (30LL * 1000 * 1000)
+#define LINK_WIFI_RETRY_MAX_US (5LL * 60 * 1000 * 1000)
+#define LINK_WIFI_JOIN_TIMEOUT_MS 20000
+
+// A paired Link whose boot join found no saved network (the router still
+// starting after a power cut, say) has nothing else to rejoin it: wifi_mgr only
+// reconnects after a first association. The heartbeat looks again, backing
+// off, until one works; from then on wifi_mgr keeps it. (Muse's keeper does
+// this on boards with the full UI.)
+static void link_keep_wifi(void) {
+    static bool joined_once;
+    static int64_t next_try;
+    static int64_t backoff = LINK_WIFI_RETRY_MIN_US;
+    if (wifi_mgr_is_connected()) {
+        joined_once = true;
+        backoff = LINK_WIFI_RETRY_MIN_US;
+        return;
+    }
+    if (joined_once || CONFIG_HOMEHUB_WIFI_SSID[0] || !config_setup_complete()) return;
+    int64_t now = esp_timer_get_time();
+    if (now < next_try || !operation_gate_take(0, "Wi-Fi rejoin")) return;
+    char joined[WIFI_KNOWN_SSID_MAX + 1];
+    app_wifi_join_t result = join_saved_networks(LINK_WIFI_JOIN_TIMEOUT_MS, JOIN_ANY,
+                                                 true, joined);
+    operation_gate_give();
+    if (result == APP_WIFI_JOINED) {
+        joined_once = true;
+        ui_set_wifi(joined);
+        ui_set_status("wifi_connected");
+        led_status_set_state(LED_STATE_WIFI_CONNECTED);
+        persist_connected_wifi_channel();
+        return;
+    }
+    if (result != APP_WIFI_BUSY) {
+        ui_set_status("wifi_failed");
+        led_status_set_state(LED_STATE_ERROR);
+    }
+    next_try = now + backoff;
+    backoff = backoff * 2 > LINK_WIFI_RETRY_MAX_US ? LINK_WIFI_RETRY_MAX_US : backoff * 2;
+}
+#endif
 
 
 #if CONFIG_MUSE_ENABLED
@@ -2446,7 +2764,7 @@ bool app_wifi_nap(void) {
 #endif  // CONFIG_MUSE_ENABLED
 
 #if CONFIG_MUSE_ENABLED || CONFIG_HOMEHUB_VOICE
-// Muse's and the voice board's own Hatch session reach the VM with these.
+// Muse's and the voice board's own voice sessions reach the VM with these.
 typedef struct {
     const char *want_vm;
     char *vm_id;
@@ -2469,8 +2787,10 @@ static const vm_info_t *find_vm_by_id(const vm_info_t *vms, int count, const cha
     return NULL;
 }
 
-// Runs on an internal-RAM stack: the caller's may be in PSRAM, and this reads
-// and (on token refresh) writes NVS.
+// Reads and (on token refresh) writes NVS, so its stack is in internal RAM
+// (the caller's may be in PSRAM) unless code and rodata run from PSRAM and the
+// board puts setup task stacks there (helper_task.h): with live calls on, the
+// StopWatch has no 8 KB internal block left once Wi-Fi and Link are up.
 static void hatch_vm_task(void *arg) {
     hatch_vm_request_t *req = arg;
     if (config_is_provisioned() && operation_gate_take(pdMS_TO_TICKS(15000), "Muse VM lookup")) {
@@ -2499,7 +2819,7 @@ static void hatch_vm_task(void *arg) {
     }
     xTaskNotifyGive(req->waiter);
     stack_monitor_record(NULL);
-    vTaskDelete(NULL);
+    helper_task_delete(NULL);
 }
 
 bool app_hatch_vm_credentials(const char *want_vm, char *vm_id, size_t id_cap,
@@ -2509,7 +2829,8 @@ bool app_hatch_vm_credentials(const char *want_vm, char *vm_id, size_t id_cap,
         .vm_name = vm_name, .name_cap = name_cap,
         .waiter = xTaskGetCurrentTaskHandle(),
     };
-    if (xTaskCreate(hatch_vm_task, "muse_vm", 8192, &req, 4, NULL) != pdPASS) {
+    if (helper_task_create(hatch_vm_task, "muse_vm", 8192, &req, 4, NULL) != pdPASS) {
+        ESP_LOGW(TAG, "Muse VM lookup: no memory for its task");
         return false;
     }
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
@@ -2525,15 +2846,17 @@ void app_ble_companion_set(bool advertise) {
     if (config_setup_complete()) ui_set_ble(advertise ? "companion" : "off");
 }
 
-bool app_confirm_pairing_press(void) {
+bool app_confirm_pairing_press(int64_t pressed_after_us) {
     factory_test_on_button_press();
     if (!link_pairing_confirmation_required() || !ble_server_has_connection()) {
         return false;
     }
-    uint32_t session_generation = link_pairing_confirm_active_session();
+    uint32_t session_generation = link_pairing_confirm_active_session(pressed_after_us);
     if (session_generation) {
         notify_pairing_confirmed(session_generation);
         ESP_LOGI(TAG, "talk button confirmed active pairing session");
+    } else {
+        ESP_LOGI(TAG, "talk press didn't confirm (prompt not armed or expired, or the press began before it)");
     }
     return true;
 }
@@ -2615,9 +2938,9 @@ static void on_ws_control_status(const char *status) {
 // startup. Marking the running image valid (a) commits a PENDING_VERIFY image
 // so the bootloader stops trying to revert it, and (b) blesses a normal boot
 // so the running slot becomes a valid rollback target for the *next* OTA.
-// We gate validation on the control WS coming up: that's the channel a future
-// device.ota would arrive on, so if the new image can't reach it, reverting is
-// the only way to keep the device recoverable.
+// We gate validation on the control WS coming up: an image that can't reach
+// it can't reach Muse at all, so reverting is the way to keep the device
+// working.
 static void ota_verify_task(void *arg) {
     (void)arg;
     int64_t deadline = esp_timer_get_time() + OTA_VERIFY_TIMEOUT_US;
@@ -2713,19 +3036,21 @@ void app_run(void) {
     ESP_LOGI(TAG, "  Colour:   %s", have_colour ? colour : "(none)");
     ESP_LOGI(TAG, "  Region:   %s", have_region ? region : "(none)");
     ESP_LOGI(TAG, "  Verify:   %s", link_pairing_sign_factory_test());
-    // Only the hint gadgets.muse.ai displays; the full token is never logged.
-    ESP_LOGI(TAG, "  SDK token:  %.12s", identity_sdk_token() ? identity_sdk_token() : "(none)");
-    char paired_sdk_hint[IDENTITY_SDK_TOKEN_HINT_LEN + 1];
-    if (identity_sdk_token_changed_since_pairing(paired_sdk_hint, sizeof(paired_sdk_hint))) {
-        ESP_LOGW(TAG, "  Paired with SDK token %s, not this one. Pair again in the "
-                      "Muse app to use it.", paired_sdk_hint);
+    // Whether there is one, its length and a SHA-256 prefix: never any of its
+    // characters (token_fp.h).
+    char sdk_fp[TOKEN_FP_TEXT_LEN];
+    ESP_LOGI(TAG, "  SDK token:  %s", token_fp_text(identity_sdk_token(), sdk_fp));
+    if (identity_sdk_token_changed_since_pairing(NULL, 0)) {
+        ESP_LOGW(TAG, "  Paired with another SDK token, not this one. Pair again in the "
+                      "Muse app to use it.");
     }
     ESP_LOGI(TAG, "========================");
 
-    link_pairing_init(identity_node_id(), identity_device_id(), identity_mac(),
+    // Setup offers the new-setup id (identity.h).
+    link_pairing_init(identity_setup_node_id(), identity_device_id(), identity_mac(),
                       app_desc ? app_desc->version : "unknown", identity_sdk_token());
     vm_api_set_sdk_token(identity_sdk_token());
-#if !CONFIG_MUSE_ENABLED
+#if CONFIG_GADGET_SDK_TOKEN_CONSOLE && !CONFIG_MUSE_ENABLED
     // Muse boards' own console takes the command (muse_glue_start).
     sdk_token_console_start();
 #endif
@@ -2752,7 +3077,7 @@ void app_run(void) {
 #endif
 
     // Arm OTA rollback verification. If the running image was just installed
-    // by device.ota it boots as PENDING_VERIFY and must reach the control WS
+    // by an OTA update it boots as PENDING_VERIFY and must reach the control WS
     // within OTA_VERIFY_TIMEOUT_US, else the bootloader reverts it on reboot.
     // The one exception is the ESP-Mosaico in Vibe Mode: its Vibe Mode
     // firmware installs apps itself and leaves them PENDING_VERIFY, and that
@@ -2889,7 +3214,8 @@ void app_run(void) {
     reterminal_sht4x_init();
 #endif
 #if CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_UC8179 || \
-    CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_SPECTRA6
+    CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_SPECTRA6 || \
+    CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_IT8951
     reterminal_battery_init();
 #endif
 
@@ -2913,12 +3239,15 @@ void app_run(void) {
         ble_coex_set_active(true);
         ui_set_ble("companion");
 #endif
-#if CONFIG_MUSE_ENABLED && CONFIG_SPIRAM && !CONFIG_MUSE_BOARD_CROWPANEL_ADVANCE_43
+#if CONFIG_MUSE_ENABLED && CONFIG_SPIRAM && !CONFIG_MUSE_BOARD_CROWPANEL_ADVANCE_43 && \
+    !CONFIG_MUSE_BOARD_WAVESHARE_S3_175 && !CONFIG_MUSE_BOARD_WAVESHARE_S3_175C
         // Muse may turn on its BLE companion later. The controller needs a
         // 30 KB internal block that TLS and the VM session leave fragmented,
         // so bring the stack up now; it stays silent until advertising is on.
         // The CrowPanel starts it lazily instead, after muse_app_run() has
-        // reserved its internal I2S DMA buffers.
+        // reserved its internal I2S DMA buffers. So do the 1.75 and 1.75C:
+        // the idle stack leaves no 8 KB block for the muse_vm task and chat
+        // never connects (#351).
         start_ble_setup_server_if_needed();
 #endif
     }
@@ -3033,6 +3362,7 @@ void app_run(void) {
 #if CONFIG_MUSE_ENABLED
         muse_keep_vm_session();
 #else
+        link_keep_wifi();
         // Paired, but with no VM session: the boot attempt failed (a refusal
         // that keeps the credentials, or the network). Nothing else retries
         // it. It keeps its own floor: a fetch that succeeds without starting a

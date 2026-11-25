@@ -1223,7 +1223,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=3.3.2" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "sounddevice", marker = "extra == 'voice'", specifier = ">=0.5,<1" },
-    { name = "websockets", specifier = ">=13" },
+    { name = "websockets", specifier = ">=15" },
 ]
 provides-extras = ["test", "voice"]
 

@@ -25,13 +25,15 @@
 # It overrides the ESP32-C5 assumptions in sdkconfig.defaults; C5-only options
 # there are ignored for this target.
 CONFIG_IDF_TARGET="esp32s3"
+CONFIG_MUSE_DEVICE_MODEL_ID="muse-gadget-reterminal-e1001"
+CONFIG_MUSE_DEVICE_MODEL_NAME="Seeed reTerminal E1001"
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 
 # No status LED under firmware control that can show colours: the e-paper
 # shows a status screen.
 CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_UC8179=y
 # Advertise as <prefix>-Disp-XXXXXX to tell this board apart from real devices:
-# MuseGadget-Disp in the open-source build, HomeLink-Disp in the internal one.
+# MuseGadget-Disp with the default prefix.
 CONFIG_HOMEHUB_BLE_NAME_SUFFIX="-Disp"
 # The green button on top, active low. The two white ones (GPIO4 and 5) are
 # not used.

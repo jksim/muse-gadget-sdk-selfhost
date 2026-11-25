@@ -29,6 +29,7 @@
 #include "app.h"
 #include "config_store.h"
 #include "identity.h"
+#include "muse_server_hosts.h"
 #include "wifi_mgr.h"
 
 #include "muse_link.h"
@@ -47,7 +48,9 @@ static char s_host[MUSE_HOST_MAX + 1];
 
 void voice_hatch_refresh(void) {
     char host[MUSE_HOST_MAX + 1];
-    if (!config_get_str("noise_host", host, sizeof(host))) host[0] = '\0';
+    if (!config_get_str("noise_host", host, sizeof(host)) || !muse_server_noise_allowed(host)) {
+        host[0] = '\0';
+    }
     portENTER_CRITICAL(&s_lock);
     strlcpy(s_host, host, sizeof(s_host));
     portEXIT_CRITICAL(&s_lock);
@@ -103,8 +106,9 @@ bool muse_settings_speaker_on(void) {
     return true;
 }
 
-// No screen either, so reply text is never shown; Muse's default page.
-void muse_state_page(const char *text, int *cols, int *lines) {
+// Muse's default page, for boards that never show reply text. A board that
+// does defines its own.
+__attribute__((weak)) void muse_state_page(const char *text, int *cols, int *lines) {
     (void)text;
     *cols = 16;
     *lines = 2;

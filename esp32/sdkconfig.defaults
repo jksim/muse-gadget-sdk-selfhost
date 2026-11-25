@@ -31,6 +31,10 @@ CONFIG_HOMEHUB_OTA_ENABLED=n
 # authenticated support path and never exposed in user-visible chat.
 CONFIG_HOMEHUB_SUPPORT_BUG_REPORT=y
 
+# After an abnormal reset, send the VM one summary of it with no logs or
+# identifiers (link.error_report).
+CONFIG_HOMEHUB_ERROR_REPORT=y
+
 # Optimize for performance (-O2). The default is debug (-Og) which
 # leaves significant throughput on the table for TLS, lwIP, and the
 # tunnel framing path.
@@ -55,11 +59,15 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_BOOT_INIT=y
 CONFIG_SPIRAM_USE_MALLOC=y
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
-# Reserve 64 KB internal SRAM from the PSRAM fallback allocator. With BLE
-# active (~80 KB NimBLE), the default 32 KB reserve left too little contiguous
-# internal SRAM for HW AES DMA buffers under burst TLS ("esp-aes: Failed to
-# allocate memory").
-CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+# Keep 64 KB of internal SRAM for DMA and internal-only allocations
+# (CONFIG_HOMEHUB_DMA_RESERVE_KB, main/main.c). With BLE active (~80 KB
+# NimBLE), a 32 KB reserve left too little contiguous internal SRAM for HW AES
+# DMA buffers under burst TLS ("esp-aes: Failed to allocate memory").
+# ESP-IDF's own reserve stays off, except on the classic ESP32
+# (sdkconfig.defaults.esp32): from v6.0.3 it also serves malloc(), and
+# heap_caps_get_minimum_free_size() counts it as empty.
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=0
+CONFIG_HOMEHUB_DMA_RESERVE_KB=64
 # Keep GDMA control functions in IRAM. C5 can DMA payloads in PSRAM;
 # AES DMA descriptors still require DMA-capable internal SRAM.
 CONFIG_GDMA_CTRL_FUNC_IN_IRAM=y
@@ -70,7 +78,7 @@ CONFIG_GDMA_CTRL_FUNC_IN_IRAM=y
 CONFIG_ESP_INT_WDT=n
 CONFIG_ESP_TASK_WDT_EN=n
 
-# Custom partition table (dual-OTA: ota_0/ota_1 + otadata for device.ota)
+# Custom partition table (dual-OTA: ota_0/ota_1 + otadata for OTA updates)
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # Move the partition table from the IDF default 0x8000 to 0x10000. A Secure Boot
@@ -142,6 +150,19 @@ CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
 CONFIG_ESP_TLS_USING_MBEDTLS=y
 
+# Resume the VM WebSocket's last TLS session on a reconnect (Link's control
+# session, main/noise_control.cpp, and Muse's voice session): the edge
+# resumes TLS 1.2 sessions by id, which skips the certificate chain and the
+# ECDHE. A session costs a few hundred bytes (no peer certificate kept:
+# MBEDTLS_SSL_KEEP_PEER_CERTIFICATE stays off); a fallback full handshake
+# verifies against the CA bundle as always.
+CONFIG_ESP_TLS_CLIENT_SESSION_TICKETS=y
+
+# Noise's X25519 on HACL* Curve25519 (components/noise_core/Kconfig): formally
+# verified, constant-time, mbedTLS's own Everest copy, same bytes as PSA's.
+# About 5x faster than PSA's on the ESP32-S3 and 7.7x on the ESP32-C6.
+CONFIG_NOISE_CORE_X25519_HACL=y
+
 # Community v5 pairing uses ephemeral ECDH without a manufacturer credential.
 # Release overlays opt into deterministic eFuse ECDSA for official v5 pairing.
 # The production fleet scalar is shared, so deterministic signing is mandatory.
@@ -177,12 +198,17 @@ CONFIG_ESP_WIFI_RX_BA_WIN=32
 # window ceiling is ~16 KiB / RTT (2.62 Mbit/s at 50 ms), before protocol costs.
 # Camera-relevant ceiling: ~2.6 Mbit/s at 50 ms RTT, with lower usable goodput.
 # Keep receive mboxes and IRAM hot paths for throughput. The C5 moves lwIP and
-# Wi-Fi heap allocations to PSRAM and doubles these windows in
+# Wi-Fi heap allocations to PSRAM and widens these windows in
 # sdkconfig.defaults.esp32c5.
 CONFIG_LWIP_TCP_WND_DEFAULT=16384
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=16384
 CONFIG_LWIP_IP_FORWARD=y
 CONFIG_LWIP_IPV4_NAPT=y
+# net.forward's TCP forwards are NAPT port maps.
+CONFIG_LWIP_IPV4_NAPT_PORTMAP=y
+# device.discover's vendor window holds 6 sockets at once beside the session's;
+# a socket slot is a few dozen bytes of static RAM.
+CONFIG_LWIP_MAX_SOCKETS=16
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=64
 CONFIG_LWIP_UDP_RECVMBOX_SIZE=64
 CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=64
@@ -197,7 +223,11 @@ CONFIG_LWIP_TCPIP_CORE_LOCKING_INPUT=y
 CONFIG_FREERTOS_HZ=1000
 
 # Don't abort if PSRAM init fails on first boot (can happen on power-on reset).
+# The C5 requires PSRAM instead, for TCP window scaling (sdkconfig.defaults.esp32c5).
 CONFIG_SPIRAM_IGNORE_NOTFOUND=y
 # Skip PSRAM memtest — intermittent 3/262144 failures on first power-on reset
 # with C5 rev 1.2 cause abort; succeeds on warm reboot. Not worth blocking boot.
 CONFIG_SPIRAM_MEMTEST=n
+
+# Per-network cloud proxy transport (HTTP CONNECT / SOCKS5).
+CONFIG_ESP_HTTP_CLIENT_ENABLE_CUSTOM_TRANSPORT=y

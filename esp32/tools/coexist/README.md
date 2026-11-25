@@ -24,9 +24,11 @@ own directory.
 ## Defaults this work changed
 
 - `sdkconfig.defaults.esp32c5` (C5 only): lwIP and Wi-Fi heap buffers prefer
-  PSRAM (`SPIRAM_TRY_ALLOCATE_WIFI_LWIP`), the TCP windows grow to 64 KiB,
-  and the receive path deepens to take a whole window in one burst (64
-  dynamic RX buffers, 12 queued out-of-order segments).
+  PSRAM (`SPIRAM_TRY_ALLOCATE_WIFI_LWIP`), the TCP windows grow to 96 KiB
+  with window scaling (PSRAM required at boot, 4 static Wi-Fi TX buffers),
+  and the receive path deepens to take a whole window in one burst (96
+  dynamic RX buffers, a 96-entry receive mailbox, 12 queued out-of-order
+  segments).
 - `CONFIG_HOMEHUB_BLE_COEX` (on for C5 with `CONFIG_HOMEHUB_BLE_PERSISTENT`):
   Wi-Fi first radio sharing once setup is complete (`main/ble_coex.c`).
 - `CONFIG_HOMEHUB_FAST_GCM` (on for C5 with PSRAM): faster AES-GCM for TLS and
@@ -44,7 +46,7 @@ own directory.
 | `sdkconfig.ble-mem` | BLE resident without the RAM cost (after `ble-persist` and `nimble-tuned`): NimBLE host allocations in PSRAM, controller code in flash, BLE buffers and static Wi-Fi RX buffers trimmed (10, with a 20-frame block-ack window) |
 | `sdkconfig.wifi-trim` | No SoftAP or WPA2-Enterprise (-58 KB flash) |
 | `sdkconfig.net-internal16` | Bench baseline: the pre-change networking (lwIP in internal RAM, 16 KiB windows) |
-| `sdkconfig.tx-by-ref` | Require PSRAM at boot so Wi-Fi transmits lwIP's PSRAM pbufs by reference and window scaling is available |
+| `sdkconfig.tx-by-ref` | Require PSRAM at boot so Wi-Fi transmits lwIP's PSRAM pbufs by reference and window scaling is available (C5 builds now do by default) |
 | `sdkconfig.tcp128` | 128 KiB receive / 112 KiB send windows (needs `tx-by-ref`; stalled the VM tunnel, not for use) |
 | `sdkconfig.ctrl-flash` | BLE controller from flash (-21 KB IRAM; experimental, slows BLE) |
 | `sdkconfig.bench`, `sdkconfig.bench-quick` | Boot into `main/pipeline_bench.cpp` instead of the gadget |
@@ -101,8 +103,8 @@ Tunnel TX and TLS RX, 5 GHz (channel 40), same run per row:
 
 | Build | RSSI | Raw TCP tx/rx Mbit/s | `full_legacy` | `full_new` | TLS RX before/after |
 |---|---|---|---|---|---|
-| 16 KB windows (current defaults) | -41 | 9.7 / 11.7 | 2.36 (CPU 76%) | 3.78 (+60%) | 3.74 / 4.93 |
-| lwIP in PSRAM + 32 KB (new C5 default) | -38 | 13.1 / 16.2 | 3.61 (CPU 97%) | 4.74 (+31%) | 4.99 / 6.34 |
+| 16 KB windows (the defaults then) | -41 | 9.7 / 11.7 | 2.36 (CPU 76%) | 3.78 (+60%) | 3.74 / 4.93 |
+| lwIP in PSRAM + 32 KB (then-new C5 default) | -38 | 13.1 / 16.2 | 3.61 (CPU 97%) | 4.74 (+31%) | 4.99 / 6.34 |
 | lwIP in PSRAM + 64 KB | -41 | 13.0 / 16.4 | 3.79 (CPU 100%) | 6.31 (+66%) | 7.55 / 7.63 |
 
 Runs at RSSI near -68 dBm (the AP's mesh sometimes hands the board to a far
@@ -119,7 +121,7 @@ BLE beside Wi-Fi: scanning at 50% duty saw ~33 devices (21-27 reports/s,
 services and the Device Name read; notifications to a Mac ran at ~130 kbit/s.
 A BLE stream took ~20% off Wi-Fi throughput.
 
-Soak of the new C5 defaults (32 KiB windows, lwIP in PSRAM, fast GCM) with
+Soak of the then-new C5 defaults (32 KiB windows, lwIP in PSRAM, fast GCM) with
 BLE resident, 25 minutes, 5 GHz at -38 dBm: 79 cycles of tunnel TX beside a
 BLE scan, TLS RX, and a BLE central connect every fourth cycle. No failures
 (TX 0/79, RX 0/79, central connects 19/19), no resets. Tunnel TX 5.29 Mbit/s
@@ -166,7 +168,7 @@ Mbit/s as the LAN host measured them:
 | ... with a central connected and reading every second | 3.5-3.8 | 3.6 | 5 / 18 |
 | ... while the C5 scans continuously | 2.8-3.1 | 1.9-2.8 | 5-8 / 30-55 |
 | BLE shut down (for comparison) | 3.9-4.2 | 3.4-3.8 | 4-9 / 15-70 |
-| `BLE_COEX` + 64 KiB windows + deep RX path (new C5 defaults) | 4.1 | 4.5-4.6 | 5 / 14-37 |
+| `BLE_COEX` + 64 KiB windows + deep RX path (then-new C5 defaults) | 4.1 | 4.5-4.6 | 5 / 14-37 |
 
 - 2.4 GHz (channel 6) and 5 GHz (channel 40) behave the same: the C5 has one
   RF path for both bands.
@@ -185,3 +187,34 @@ Mbit/s as the LAN host measured them:
   to 1.8 Mbit/s even nearby.
 - Free internal RAM at idle, paired, is the same with the new defaults:
   53 KiB (38 KiB DMA-capable).
+
+### Through a paired VM, 96 KiB windows (2026-10-28)
+
+12-second transfers between the VM and speed.cloudflare.com through the Link,
+the C5 at -47 dBm on 5 GHz, the VM about 100 ms away, BLE off after setup.
+Mbit/s through the tunnel as the C5 counted it, with its CPU busy:
+
+| Build | To VM (CPU) | From VM (CPU) | Internal RAM free, idle / lowest |
+|---|---|---|---|
+| 64 KiB windows (previous C5 defaults) | 4.2 (91%) | 3.2 (68%) | 56 / 43 KiB |
+| 96 KiB, 16 static Wi-Fi TX buffers | 4.1 (94%) | 4.7 (93%) | 28 / 14 KiB |
+| 96 KiB, 8 static Wi-Fi TX buffers (two runs) | 4.1, 4.0 (99%) | 4.1, 4.9 (92-93%) | 42 / 26 KiB |
+| 96 KiB, 6 static Wi-Fi TX buffers | 4.1 (99%) | 4.7 (94%) | 45 / 33 KiB |
+| 96 KiB, 4 static Wi-Fi TX buffers (new C5 defaults) | 4.3 (99%) | 4.4 (93%) | 49 / 39 KiB |
+
+- At a 100 ms round trip a 64 KiB window caps each direction near 5 Mbit/s.
+  From the VM it held the tunnel at 3.2 Mbit/s with the CPU at 68%; with
+  96 KiB the CPU is the limit both ways: 4.1-4.9 Mbit/s from the VM over the
+  five runs, median 4.7.
+- To the VM the CPU was already the limit, so the wider send window changes
+  nothing at this distance; it raises the cap for VMs farther away.
+- Window scaling needs PSRAM required at boot, which makes the Wi-Fi driver
+  preallocate static TX buffers in internal RAM, about 1.7 KiB each. The count
+  made no measurable difference (the two 8-buffer runs alone span 4.1-4.9).
+  16 cost 28 KiB of idle free RAM and left the lowest free DMA-capable RAM at
+  16.5 KiB, next to the tunnel's 16 KiB send reserve; 4 cost 8 KiB. All runs
+  were at good signal: with a weak one, retries hold each buffer longer.
+- More data in flight queues ahead of the gadget: round trips during
+  VM-to-gadget transfers rose from about 220 to 300 ms.
+- The RAM figures come from a development build with extra test tasks; the
+  differences carry over.

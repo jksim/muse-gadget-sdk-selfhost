@@ -29,7 +29,7 @@ import threading
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from musegadget import tls
+from musegadget import server_hosts, tls
 from musegadget.ble_framing import ChunkAssembler, encode_chunks
 from musegadget.identity import Identity
 from musegadget.pairing import PairingError, PairingSession
@@ -215,7 +215,7 @@ class SetupController:
     def device_info(self) -> dict:
         info = {
             "type": "device_info",
-            "node_id": self._identity.node_id,
+            "node_id": self._identity.setup_node_id,
             "version": self._version,
             **self._pairing.device_info(),
             "build_sha": "",
@@ -272,6 +272,15 @@ class SetupController:
         trust_error = _trust_error(command)
         if trust_error:
             self.send_status(trust_error)
+            return
+        # Setup may name the servers the device sends its credentials to; one
+        # this client doesn't allow (server_hosts) refuses the whole command
+        # before any of it is applied.
+        if not (server_hosts.api_allowed(text("api_url"))
+                and server_hosts.api_allowed(text("api_url_v2"))
+                and server_hosts.noise_allowed(text("noise_host"))):
+            log.warning("setup named a server this client doesn't allow")
+            self.send_status("error_invalid_host")
             return
         generation = 0
         with self._state_lock:

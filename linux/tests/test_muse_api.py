@@ -17,6 +17,7 @@ from __future__ import annotations
 import http.client
 import io
 import json
+import ssl
 from types import SimpleNamespace
 
 import pytest
@@ -25,13 +26,19 @@ from certs import https_json_server, make_pki
 from musegadget import muse_api, tls
 
 TOKENS = {"access_token": "new-a", "refresh_token": "new-r"}
+CONTEXT = object()
+
+
+@pytest.fixture(autouse=True)
+def filtered_context(monkeypatch):
+    monkeypatch.setattr(tls, "client_context", lambda: CONTEXT)
 
 
 @pytest.fixture
 def sent(monkeypatch):
     bodies: list[dict] = []
 
-    def urlopen(req, timeout):
+    def urlopen(req, timeout, context):
         bodies.append((req.get_header("Authorization"), json.loads(req.data)))
         return io.BytesIO(json.dumps(TOKENS).encode())
 
@@ -58,7 +65,7 @@ def test_refresh_never_presents_the_access_token_or_doubles_the_prefix(sent):
 
 
 def test_a_rejected_refresh_reports_401(monkeypatch):
-    def urlopen(req, timeout):
+    def urlopen(req, timeout, context):
         raise muse_api.urllib.error.HTTPError(req.full_url, 401, "", {}, io.BytesIO(b""))
 
     monkeypatch.setattr(muse_api.urllib.request, "urlopen", urlopen)
@@ -92,16 +99,20 @@ def test_a_tls_context_reaches_urlopen_for_fetch_and_refresh(monkeypatch):
     assert contexts == [context, context]
 
 
-def test_fetch_without_a_context_calls_urlopen_as_before(monkeypatch):
-    def urlopen(req, timeout):
+def test_fetch_without_a_provisioned_ca_uses_the_checked_system_store(monkeypatch):
+    seen = []
+
+    def urlopen(req, timeout, context):
+        seen.append(context)
         return Reply(VM_LIST)
 
     monkeypatch.setattr(muse_api.urllib.request, "urlopen", urlopen)
     vms, status = muse_api.fetch_vms_with_status("a")
-    assert (len(vms), status) == (1, 200)
+    assert (len(vms), status, seen) == (1, 200, [CONTEXT])
 
 
-def test_a_host_with_a_private_ca_is_trusted_only_through_that_ca(tmp_path):
+def test_a_host_with_a_private_ca_is_trusted_only_through_that_ca(tmp_path, monkeypatch):
+    monkeypatch.setattr(tls, "client_context", ssl.create_default_context)
     pki = make_pki()
     with https_json_server(pki, VM_LIST, tmp_path) as root:
         trusted, status = muse_api.fetch_vms_with_status("a", root, context=tls.context_for(pki.ca_pem))
@@ -113,7 +124,7 @@ def test_a_host_with_a_private_ca_is_trusted_only_through_that_ca(tmp_path):
 
 @pytest.mark.parametrize("operation", ["fetch", "refresh"])
 def test_short_http_body_is_a_retryable_failure(monkeypatch, operation):
-    def urlopen(req, timeout):
+    def urlopen(req, timeout, context):
         wire = b'HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{"partial":'
         sock = SimpleNamespace(makefile=lambda mode: io.BytesIO(wire))
         response = http.client.HTTPResponse(sock)
@@ -129,7 +140,7 @@ def test_short_http_body_is_a_retryable_failure(monkeypatch, operation):
 
 @pytest.mark.parametrize("operation", ["fetch", "refresh"])
 def test_invalid_response_encoding_is_a_retryable_failure(monkeypatch, operation):
-    def urlopen(req, timeout):
+    def urlopen(req, timeout, context):
         wire = b'HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n\xff'
         sock = SimpleNamespace(makefile=lambda mode: io.BytesIO(wire))
         response = http.client.HTTPResponse(sock)
@@ -141,3 +152,23 @@ def test_invalid_response_encoding_is_a_retryable_failure(monkeypatch, operation
         assert muse_api.fetch_vms_with_status("a") == ([], None)
     else:
         assert muse_api.refresh_device_token("r", "homelink-abcdef") == (None, None)
+
+
+@pytest.mark.parametrize("operation", ["fetch", "refresh"])
+def test_api_requests_use_the_filtered_tls_context(monkeypatch, operation):
+    contexts = []
+
+    def urlopen(req, timeout, context):
+        contexts.append(context)
+        body = json.dumps({"vm_list": [], **TOKENS}).encode()
+        wire = b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s" % (len(body), body)
+        response = http.client.HTTPResponse(SimpleNamespace(makefile=lambda mode: io.BytesIO(wire)))
+        response.begin()
+        return response
+
+    monkeypatch.setattr(muse_api.urllib.request, "urlopen", urlopen)
+    if operation == "fetch":
+        muse_api.fetch_vms_with_status("a")
+    else:
+        muse_api.refresh_device_token("r", "homelink-abcdef")
+    assert contexts == [CONTEXT]

@@ -21,7 +21,7 @@
 #include "lvgl.h"
 
 /*
- * The settings tile (swipe left from Muse): Wi-Fi, Hatch, Bluetooth, Sound,
+ * The settings tile (swipe left from Muse): Wi-Fi, Muse, Bluetooth, Sound,
  * Sleep and Power pages. Runs entirely in the LVGL task; hardware state is
  * polled from the owning modules.
  */
@@ -38,4 +38,9 @@ bool muse_settings_ui_in_subpage(void);
 /* Bench screenshots: opens a settings page by name ("home", "wifi", "muse",
  * "ble", "sound", "sleep", "battery", "power") on the next tick. */
 bool muse_settings_ui_bench_open(const char *name);
+#if CONFIG_MUSE_AVATAR_SYNC && CONFIG_MUSE_UI_THEME
+/* Bench regression only: queue a click on the current Avatar/Appearance
+ * primary row or back button. Executed by the LVGL owner, never the console. */
+bool muse_settings_ui_bench_action(const char *action);
+#endif
 #endif

@@ -26,6 +26,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from host_cjson import cjson_source
+
 ROOT = Path(__file__).resolve().parents[1]
 MUSE = ROOT / "components/muse"
 VSTREAM = ROOT / "components/muse_vstream"
@@ -44,7 +46,7 @@ class MuseVideoTest(unittest.TestCase):
                 [*cc, "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter",
                  f"-I{VSTREAM / 'include'}", f"-I{MUSE}", f"-I{JSON}", "-o", str(exe),
                  str(ROOT / "tests/muse_video_harness.c"), str(VSTREAM / "muse_vstream.c"),
-                 str(MUSE / "muse_video_wire.c"), str(JSON / "cJSON.c"), "-lm"],
+                 str(MUSE / "muse_video_wire.c"), *cjson_source(JSON), "-lm"],
                 capture_output=True, text=True)
             self.assertEqual(build.returncode, 0, build.stdout + build.stderr)
             run = subprocess.run([str(exe)], capture_output=True, text=True, timeout=60)
@@ -137,7 +139,10 @@ int main(void)
         self.assertIn("if(CONFIG_MUSE_VIDEO)", cmake)
         self.assertIn('"muse_video_wifi.c" "muse_video_wire.c"', cmake)
         self.assertIn("muse_vstream tinyh264 libvpx_vp8", cmake)
-        self.assertIn('"muse_video.c" "muse_vdec.c" "muse_yuv.c"', cmake)
+        self.assertIn('list(APPEND srcs "muse_video.c")', cmake)
+        self.assertIn('list(APPEND srcs "muse_vdec.c")', cmake)
+        self.assertIn('list(APPEND srcs "muse_yuv.c")', cmake)
+        self.assertIn("if(CONFIG_MUSE_VIDEO OR CONFIG_MUSE_AVATAR_ANIMATIONS)", cmake)
         manifest = (MUSE / "idf_component.yml").read_text()
         # Keyed on a symbol every build defines: a rule on one a build lacks
         # (MUSE_VIDEO_WIFI without video) stops the component manager.
@@ -161,7 +166,7 @@ int main(void)
         self.assertIn("s_transports[i]->request(true);", video)
         self.assertIn("s_transports[i]->request(false);", video)
         tiny = (ROOT / "components/tinyh264/CMakeLists.txt").read_text()
-        self.assertIn("if(CONFIG_MUSE_VIDEO)", tiny)
+        self.assertIn("if(CONFIG_MUSE_VIDEO OR CONFIG_MUSE_AVATAR_ANIMATIONS)", tiny)
         vpx = (ROOT / "components/libvpx_vp8/CMakeLists.txt").read_text()
         self.assertIn("if(CONFIG_MUSE_VIDEO_VP8)", vpx)
         # VP8's IRAM placement is a choice that follows the decoders' IRAM option.

@@ -15,8 +15,8 @@
 # Waveshare ESP32-S3-Touch-AMOLED-2.06: ESP32-S3R8 (8 MB octal PSRAM in
 # package), 32 MB GD25Q256 flash, native USB Serial/JTAG (303a:1001).
 #
-# Pin/fact sources (cite per devices/AGENTS.md, do not guess pins):
-#  - Vendor repo (clone it, do not read on the web):
+# Pin/fact sources:
+#  - Vendor repo:
 #    https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-2.06
 #    Schematic/ESP32-S3-Touch-AMOLED-2.06-Schematic-V1.0.pdf: U2 ESP32-S3R8,
 #    U3 GD25Q256, BOOT (Key1) on GPIO0, PWR (Key3) to the AXP2101 PWRON only,
@@ -29,6 +29,8 @@
 # Load last, after sdkconfig.muse.
 
 CONFIG_IDF_TARGET="esp32s3"
+CONFIG_MUSE_DEVICE_MODEL_ID="muse-gadget-waveshare-s3-206"
+CONFIG_MUSE_DEVICE_MODEL_NAME="Waveshare ESP32-S3-Touch-AMOLED-2.06"
 CONFIG_MUSE_BOARD_WAVESHARE_S3_206=y
 # The schematic's GD25Q256 is 32 MB; Waveshare's own examples only claim 16.
 CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
@@ -40,7 +42,7 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 CONFIG_SPIRAM_RODATA=y
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
-CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y
+CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y
 CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
 CONFIG_ESP32S3_DATA_CACHE_64KB=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y

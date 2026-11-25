@@ -1,3 +1,19 @@
+<!--
+Copyright (c) Meta Platforms, Inc. and affiliates.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+
 # Speaking gestures
 
 The bundled avatar uses a local, procedural controller in
@@ -39,7 +55,8 @@ playback gets both hand gestures and a visual speaking rhythm when replies are
 paced with silent PCM. The mouth varies between closed, rounded and open shapes,
 with short phrase breaths. This adds no audio. Once actual voice energy is
 detected, audio drives the mouth for the
-rest of that reply, including closing during real pauses. Visible mouth shapes
+rest of that reply, including closing during real pauses; the default avatar
+smiles with closed eyes once a pause passes about half a second. Visible mouth shapes
 approximate articulation; they are not phoneme lip sync.
 
 Brows, gaze and small face nods follow the active gesture. Raises briefly lift

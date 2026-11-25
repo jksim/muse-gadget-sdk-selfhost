@@ -33,7 +33,7 @@
 extern "C" {
 #endif
 
-/* Token saved (the VM ID is optional) or Link paired to a Hatch account. */
+/* Token saved (the VM ID is optional) or Link paired to a Muse account. */
 bool muse_hatch_configured(void);
 /* Session task -> status shown in settings and over BLE. */
 void muse_hatch_report(muse_hatch_state_t state, const char *detail);
@@ -86,6 +86,15 @@ static inline void muse_chat_reject(muse_chat_rejected_t *rejected, const char *
 #define MUSE_HATCH_NOTE_TAIL "\"}]}"
 #define MUSE_HATCH_WAV_HEADER 44
 
+/* A voice note's photo (CONFIG_MUSE_PHOTO_NOTES) follows its audio as an
+ * image item: the request ends PHOTO_HEAD, the base64 JPEG, PHOTO_TAIL in
+ * place of NOTE_TAIL. */
+#define MUSE_CHAT_PHOTO_HEAD \
+    "\"},{\"type\":\"image\",\"mime_type\":\"image/jpeg\",\"filename\":\"photo.jpg\",\"data_base64\":\""
+#define MUSE_CHAT_PHOTO_TAIL "\"}]}"
+/* Whether `data` is `len` bytes of base64 for a JPEG (muse_chat_image.c). */
+bool muse_chat_is_jpeg_base64(const char *data, size_t len);
+
 /* Voice note helpers (muse_chat_text.c). The note's length isn't known until
  * the release, so the WAV header gives the streaming "unknown" size. */
 void muse_hatch_wav_header(uint8_t h[MUSE_HATCH_WAV_HEADER], uint32_t rate);
@@ -98,7 +107,7 @@ void muse_hatch_tail_words(const char *src, char *out, size_t cap);
 bool muse_hatch_caption_at(const char *text, size_t at, char *out, size_t cap);
 /* Manual pages, with the same word/UTF-8 wrapping as automatic captions.
  * Returns the total number of pages; page is clamped to that range. */
-#if CONFIG_MUSE_BOARD_SENSECAP_WATCHER
+#if CONFIG_MUSE_BOARD_SENSECAP_WATCHER || CONFIG_MUSE_LATEST_REPLY
 int muse_chat_caption_page(const char *text, int page, char *out, size_t cap);
 #endif
 

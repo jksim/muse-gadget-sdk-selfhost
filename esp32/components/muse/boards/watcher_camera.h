@@ -6,6 +6,12 @@
  * You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 #pragma once
@@ -20,6 +26,9 @@ extern "C" {
 /* Double-click to open live preview, then tap the shutter or double-click again. */
 void watcher_camera_preview_toggle(void);
 bool watcher_camera_preview_active(void);
+/* Closes the live view now, from the caller's task, and clears its frame
+ * from the screen; a photo note's photo was its frame. */
+void watcher_camera_preview_close(void);
 /* Captures one frame for the Home Link camera.capture command. */
 bool watcher_camera_capture(char **jpeg_base64, const char **error);
 esp_err_t watcher_camera_prepare(void);

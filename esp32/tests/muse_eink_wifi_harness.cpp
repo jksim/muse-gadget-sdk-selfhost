@@ -1,13 +1,19 @@
 /*
  * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
- * You may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and limitations.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 #include "muse_eink_priv.h"
 #include <assert.h>
 #include <atomic>
@@ -223,7 +229,7 @@ static void short_status() { wifi_state = {}; wifi_state.state = MUSE_WIFI_NO_NE
 static void tall_status() {
     wifi_state = {}; wifi_state.state = MUSE_WIFI_CONNECTING;
     strlcpy(wifi_state.ssid, "synthetic-long-network-name-ABCDE", sizeof(wifi_state.ssid));
-    strlcpy(wifi_state.detail, "Joining synthetic network while waiting for a local test response", sizeof(wifi_state.detail));
+    strlcpy(wifi_state.detail, "Waiting\none\ntwo\nthree\nfour\nfive\nsix", sizeof(wifi_state.detail));
 }
 static void assert_no_delete() {
     assert(forgotten.empty() && stored.size() == 2);

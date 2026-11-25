@@ -566,7 +566,9 @@ static void finish_run(run_status_t status, esp_err_t error)
     s_run.finished_us = fw_now();
     if (error) { remember_error(); save_run(); } /* checkpoint before reset-prone restoration */
     /* One safe resting state, even on abort. Never drops EXP_PWR_SYSTEM. */
-    s_run.restore_error = fw_apply(resting_state());
+    s_run.restore_error = muse_ptest_board_stop();
+    esp_err_t apply_error = fw_apply(resting_state());
+    if (!s_run.restore_error) { s_run.restore_error = apply_error; }
     if (!s_run.restore_error) {
         muse_ptest_readback_t restored = {0};
         s_run.restore_error = fw_readback(&restored); /* USB allowed outside RUN_RUNNING */
@@ -579,6 +581,7 @@ static void finish_run(run_status_t status, esp_err_t error)
     if (s_run.restore_error) { remember_error(); }
     if (s_run.restore_error && status == RUN_COMPLETE) { s_run.status = RUN_ERROR; }
     save_run();
+    muse_ptest_board_run_active(false);
 }
 
 static void abort_run(esp_err_t error, bool power_error)
@@ -714,6 +717,7 @@ static void command(const char *line)
     if (a.charging_off && !muse_ptest_board_charging_supported()) {
         emit_error("charging_off_not_supported", ESP_ERR_NOT_SUPPORTED); return;
     }
+    muse_ptest_board_run_active(true);
     memset(&s_run, 0, sizeof(s_run));
     s_run.usb_powered = a.usb_powered;
     s_run.charging_off = a.charging_off;
@@ -839,6 +843,7 @@ static void resume_run(void)
 {
     if (!s_resume_pending) { return; }
     s_resume_pending = false;
+    muse_ptest_board_run_active(true);
     record_t *r = &s_run.records[s_run.count - 1];
     deep_info_t *d = deep_for(s_run.count - 1);
     muse_ptest_readback_t p = {0};
@@ -922,7 +927,7 @@ static void tick(void)
             r->actual.io_frames -= s_capture_frames;
             r->actual.adc_samples -= s_capture_adc;
             r->actual.wifi_scans -= s_capture_scans;
-            if ((s->load == MUSE_PTEST_MIC || s->load == MUSE_PTEST_SINE) && !r->actual.io_frames) { e = ESP_FAIL; }
+            if ((s->load == MUSE_PTEST_MIC || s->load == MUSE_PTEST_SINE || s->load == MUSE_PTEST_EPAPER) && !r->actual.io_frames) { e = ESP_FAIL; }
             if (s->load == MUSE_PTEST_ADC_SAMPLE && !r->actual.adc_samples) { e = ESP_FAIL; }
             if (s->load == MUSE_PTEST_WIFI_SCAN && !r->actual.wifi_scans) { e = ESP_FAIL; }
         }
@@ -1050,7 +1055,7 @@ static bool s_cpu_pd_veto_held;
 static esp_err_t fw_prepare_deep(const muse_ptest_state_t *state, int64_t us)
 {
     esp_err_t e;
-    /* RTC_NOINIT is SLOW; SDK RTC-time state is FAST. On S3/IDF 6.0.1
+    /* RTC_NOINIT is SLOW; SDK RTC-time state is FAST. On S3/IDF 6.0.3
      * these domains have no PD capability, so sleep_modes.c never sets their
      * PD flags. On SDK/SoC variants exposing them, retain each once per boot. */
 #if SOC_PM_SUPPORT_RTC_SLOW_MEM_PD
@@ -1097,7 +1102,7 @@ static esp_err_t fw_apply(const muse_ptest_state_t *state)
     if (s_dryrun) { return muse_ptest_board_apply(state); } /* USB lock held; no PM changes */
     bool veto = !(state->knobs & MUSE_PTEST_CPU_PD);
     if (veto != s_cpu_pd_veto_held) {
-        /* IDF v6.0.1 sleep_modes.c uses ON refs. OFF releases ours; AUTO
+        /* IDF v6.0.3 sleep_modes.c uses ON refs. OFF releases ours; AUTO
          * would erase other owners' refs. ON vetoes RTC_SLEEP_PD_CPU even
          * with PM_POWER_DOWN_CPU_IN_LIGHT_SLEEP=y. OFF still needs retention. */
         if ((e = esp_sleep_pd_config(ESP_PD_DOMAIN_CPU, veto ? ESP_PD_OPTION_ON : ESP_PD_OPTION_OFF))) { return e; }
@@ -1109,7 +1114,7 @@ static esp_err_t fw_apply(const muse_ptest_state_t *state)
     }
     const esp_pm_config_t pm = {
         .min_freq_mhz = state->cpu_mhz ? state->cpu_mhz : 40,
-        .max_freq_mhz = state->cpu_mhz ? state->cpu_mhz : 240,
+        .max_freq_mhz = state->cpu_mhz ? state->cpu_mhz : CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
         .light_sleep_enable = state->cpu_mhz == 0,
     };
     if ((e = esp_pm_configure(&pm))) { return e; }
@@ -1167,6 +1172,8 @@ static void fw_codec_regs(muse_ptest_codec_regs_t *out) { muse_ptest_board_codec
 static void fw_dryrun_mode(bool on) { muse_ptest_board_usb_dryrun(on); }
 #endif
 
+__attribute__((weak)) esp_err_t muse_ptest_board_stop(void) { return ESP_OK; }
+__attribute__((weak)) void muse_ptest_board_run_active(bool active) { (void)active; }
 __attribute__((weak)) bool muse_ptest_board_charging_supported(void) { return false; }
 __attribute__((weak)) esp_err_t muse_ptest_board_charging(bool off, uint32_t guard_ms)
 {

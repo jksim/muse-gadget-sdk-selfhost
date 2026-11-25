@@ -15,10 +15,16 @@
  */
 
 #include "muse_glue.h"
+#include "sdkconfig.h"
+#if CONFIG_MUSE_AVATAR_SYNC
+#include "avatar_sync.h"
+#include "muse_avatar.h"
+#endif
 
 #include <stdlib.h>
 #include <string.h>
 
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_netif.h"
@@ -33,9 +39,19 @@
 #include "config_store.h"
 #include "identity.h"
 #include "noise_control.h"
+#if CONFIG_GADGET_SDK_TOKEN_CONSOLE
 #include "sdk_token_console.h"
+#endif
+#if CONFIG_MUSE_WASM_APPS
+#include "muse_apps.h"
+#endif
+#if CONFIG_CAPABILITIES_REGISTRY
+#include "board_capabilities.h"
+#endif
+#include "token_fp.h"
 #include "stack_monitor.h"
 #include "wifi_known.h"
+#include "network_proxy_tls.h"
 #include "wifi_mgr.h"
 
 #include "muse_ble.h"
@@ -59,6 +75,7 @@ static const char *TAG = "link.muse";
 #define KEEP_BLE        BIT1    // phone setup setting changed
 #define KEEP_SAVE       BIT2    // remember s_ssid/s_pass first
 #define KEEP_RELOAD     BIT3    // Link may have changed the saved networks
+#define KEEP_PROXY      BIT5    // persist a per-network proxy on the keeper
 #define KEEP_FORGET     BIT4    // forget the networks marked in s_saved
 
 #define CONNECT_TIMEOUT_MS 20000
@@ -89,14 +106,20 @@ static volatile bool s_joining;
 static volatile bool s_nap;     // Muse's screen off a while: stay off Wi-Fi
 static char s_fail[40];
 
-// The saved networks, most recently joined first, without their passwords.
+// The saved networks, most recently joined first; Wi-Fi passwords stay in NVS.
 typedef struct {
     char ssid[MUSE_SSID_MAX + 1];
     bool hidden;
     bool forgotten;             // KEEP_FORGET will forget it
+    network_proxy_config_t proxy;
 } saved_net_t;
-static saved_net_t s_saved[MUSE_WIFI_SAVED_MAX];
+// With their proxies these take about 2.4 KB: in PSRAM where the board allows.
+EXT_RAM_BSS_ATTR static saved_net_t s_saved[MUSE_WIFI_SAVED_MAX];
 static int s_saved_count;
+static bool s_proxy_pending;
+static int s_proxy_result;
+static char s_proxy_ssid[MUSE_SSID_MAX + 1];
+EXT_RAM_BSS_ATTR static network_proxy_config_t s_proxy_next;
 // Muse changed the saved networks and the keeper hasn't written them yet, so
 // NVS is behind the copies here.
 static volatile bool s_editing;
@@ -120,19 +143,19 @@ static bool load_creds(void) {
     char pass[MUSE_PASS_MAX + 1] = {0};
     if (!config_get_str("ssid", ssid, sizeof(ssid))) ssid[0] = '\0';
     if (!config_get_str("password", pass, sizeof(pass))) pass[0] = '\0';
-    saved_net_t saved[MUSE_WIFI_SAVED_MAX];
+    saved_net_t *saved = malloc(sizeof(s_saved));
     int n = -1;
     wifi_known_list_t *list = malloc(sizeof(*list));
-    if (list) {
+    if (list && saved) {
         n = wifi_known_load(list);
         for (int i = 0; i < n; i++) {
             strlcpy(saved[i].ssid, list->nets[i].ssid, sizeof(saved[i].ssid));
             saved[i].hidden = list->nets[i].hidden;
             saved[i].forgotten = false;
+            saved[i].proxy = list->nets[i].proxy;
         }
-        wifi_known_wipe(list);
-        free(list);
     }
+    if (list) { wifi_known_wipe(list); free(list); }
     bool changed = false;
     portENTER_CRITICAL(&s_lock);
     if (!s_editing) {
@@ -143,11 +166,13 @@ static bool load_creds(void) {
             changed = true;
         }
         if (n >= 0) {
+            network_proxy_wipe(s_saved, sizeof(s_saved));
             memcpy(s_saved, saved, n * sizeof(saved[0]));
             s_saved_count = n;
         }
     }
     portEXIT_CRITICAL(&s_lock);
+    if (saved) { network_proxy_wipe(saved, sizeof(s_saved)); free(saved); }
     memset(pass, 0, sizeof(pass));
     s_linked = config_is_provisioned();
     return changed;
@@ -255,6 +280,8 @@ static void op_wifi_set(const char *ssid, const char *pass) {
         // First, moving it up or pushing out the oldest.
         int at = 0;
         while (at < s_saved_count && strcmp(s_saved[at].ssid, ssid) != 0) at++;
+        network_proxy_config_t proxy = {0};
+        if (at < s_saved_count) proxy = s_saved[at].proxy;
         // Picked from a scan, it broadcasts its name; typed, it may not.
         bool hidden = !seen_in_scan_locked(ssid) && (at == s_saved_count || s_saved[at].hidden);
         if (at == s_saved_count && s_saved_count < MUSE_WIFI_SAVED_MAX) s_saved_count++;
@@ -263,6 +290,8 @@ static void op_wifi_set(const char *ssid, const char *pass) {
         strlcpy(s_saved[0].ssid, ssid, sizeof(s_saved[0].ssid));
         s_saved[0].hidden = hidden;
         s_saved[0].forgotten = false;
+        s_saved[0].proxy = proxy;
+        network_proxy_wipe(&proxy, sizeof(proxy));
     }
     portEXIT_CRITICAL(&s_lock);
     keeper_kick(KEEP_SAVE);
@@ -279,6 +308,40 @@ static int op_wifi_saved(muse_wifi_saved_t *out, int max) {
     }
     portEXIT_CRITICAL(&s_lock);
     return n;
+}
+
+static int op_wifi_proxy_get(const char *ssid, network_proxy_config_t *out) {
+    int state = -1;
+    memset(out, 0, sizeof(*out));
+    portENTER_CRITICAL(&s_lock);
+    for (int i = 0; i < s_saved_count; i++) {
+        if (!s_saved[i].forgotten && !strcmp(ssid, s_saved[i].ssid)) {
+            *out = s_saved[i].proxy;
+            state = !strcmp(ssid, s_proxy_ssid) ? s_proxy_pending ? 1 : s_proxy_result : 0;
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&s_lock);
+    return state;
+}
+
+static bool op_wifi_proxy_set(const char *ssid, const network_proxy_config_t *proxy) {
+    if (!network_proxy_valid(proxy)) return false;
+    bool queued = false;
+    portENTER_CRITICAL(&s_lock);
+    for (int i = 0; !s_proxy_pending && i < s_saved_count; i++) {
+        if (!s_saved[i].forgotten && !strcmp(ssid, s_saved[i].ssid)) {
+            strlcpy(s_proxy_ssid, ssid, sizeof(s_proxy_ssid));
+            s_proxy_next = *proxy;
+            if (proxy->type == NETWORK_PROXY_OFF) memset(&s_proxy_next, 0, sizeof(s_proxy_next));
+            s_proxy_pending = true;
+            queued = true;
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&s_lock);
+    if (queued) keeper_kick(KEEP_PROXY);
+    return queued;
 }
 
 static void op_wifi_forget(const char *ssid) {
@@ -357,7 +420,7 @@ static int op_wifi_scan_results(muse_wifi_ap_t *out, int max, uint32_t *gen) {
     return n;
 }
 
-// ---- BLE, Hatch, setup -------------------------------------------------------
+// ---- BLE, Muse, setup --------------------------------------------------------
 
 static void op_ble_apply(void) {
     keeper_kick(KEEP_BLE);
@@ -384,7 +447,8 @@ static bool op_hatch_host(char *out, size_t cap) {
 // needs a restart, as when it's set over serial (sdk_token_console.h).
 static bool op_sdk_token_set(const char *token) {
     if (!identity_set_sdk_token(token)) return false;
-    ESP_LOGI(TAG, "SDK token %.12s set in settings, restarting to use it", token);
+    char fp[TOKEN_FP_TEXT_LEN];
+    ESP_LOGI(TAG, "SDK token (%s) set in settings, restarting to use it", token_fp_text(token, fp));
     esp_restart();
     return true;
 }
@@ -393,8 +457,8 @@ static bool op_sdk_token_changed(void) {
     return identity_sdk_token_changed_since_pairing(NULL, 0);
 }
 
-static bool op_talk_press(void) {
-    return app_confirm_pairing_press();
+static bool op_talk_press(int64_t pressed_after_us) {
+    return app_confirm_pairing_press(pressed_after_us);
 }
 
 static void op_reset_setup(void) {
@@ -424,11 +488,16 @@ static const muse_link_ops_t s_ops = {
     .req_open = noise_ctrl_req_open,
     .req_send = noise_ctrl_req_send,
     .req_cancel = noise_ctrl_req_cancel,
+#if CONFIG_MUSE_WASM_APPS
+    .req_max_body = noise_ctrl_req_max_body,
+#endif
     .power_save = noise_ctrl_set_power_save,
     .wifi_nap = op_wifi_nap,
     .ble_quiet = ble_server_set_quiet,
     .wifi_saved = op_wifi_saved,
     .wifi_forget = op_wifi_forget,
+    .wifi_proxy_get = op_wifi_proxy_get,
+    .wifi_proxy_set = op_wifi_proxy_set,
 };
 
 // ---- Keeper: joins a saved network and applies BLE, on an internal stack ----
@@ -495,6 +564,36 @@ static bool none_nearby_lately(void) {
 // leaves Wi-Fi alone instead of dropping a network it has no copy of.
 #define WIFI_OVERRIDE (CONFIG_HOMEHUB_WIFI_SSID[0] != '\0')
 
+static void save_proxy(int64_t *next_try) {
+    // s_proxy_pending owns these fields until the result is published.
+    bool ok = wifi_known_set_proxy(s_proxy_ssid, &s_proxy_next);
+    network_proxy_config_t check;
+    if (ok) ok = wifi_known_get_proxy(s_proxy_ssid, &check)
+                 && network_proxy_equal(&check, &s_proxy_next);
+    wifi_ap_record_t ap;
+    bool active = wifi_mgr_is_connected() && esp_wifi_sta_get_ap_info(&ap) == ESP_OK
+                  && !strcmp((const char *)ap.ssid, s_proxy_ssid);
+    if (ok && active) {
+        network_proxy_set_active(&s_proxy_next);
+        // Both Noise sessions re-open using the new configuration.
+        wifi_mgr_disconnect();
+        *next_try = 0;
+    }
+    load_creds();
+    portENTER_CRITICAL(&s_lock);
+    if (ok) {
+        for (int i = 0; i < s_saved_count; i++) {
+            if (!strcmp(s_saved[i].ssid, s_proxy_ssid)) s_saved[i].proxy = s_proxy_next;
+        }
+    }
+    s_proxy_result = ok ? 0 : -2;
+    s_proxy_pending = false;
+    network_proxy_wipe(&s_proxy_next, sizeof(s_proxy_next));
+    portEXIT_CRITICAL(&s_lock);
+    network_proxy_wipe(&check, sizeof(check));
+    printf("@wifi_proxy %s\n", ok ? "saved" : "error storage");
+}
+
 static void keeper_task(void *arg) {
     (void)arg;
     xEventGroupWaitBits(s_ready, BIT_LINK | BIT_MUSE, pdFALSE, pdTRUE, portMAX_DELAY);
@@ -505,6 +604,7 @@ static void keeper_task(void *arg) {
     int64_t away_backoff = AWAY_MIN_US;
     uint32_t pending = KEEP_BLE;
     bool napped = false;
+    bool wifi_stopped = false;
     bool setup_done = config_setup_complete();
     if (setup_done && muse_settings_ble_on()) {
         // Registered devices boot with the phone companion off; the settings
@@ -522,6 +622,7 @@ static void keeper_task(void *arg) {
             backoff = RETRY_MIN_US;
             away_backoff = AWAY_MIN_US;
         }
+        if (pending & KEEP_PROXY) save_proxy(&next_try);
         if (pending & KEEP_RELOAD) {
             // Link saves a network it has already joined (provisioning), so
             // don't treat that as a change to rejoin: dropping Wi-Fi mid-setup
@@ -552,10 +653,15 @@ static void keeper_task(void *arg) {
 
         bool have = s_ssid[0] != '\0' || WIFI_OVERRIDE;
         napped = napped && s_nap;
-        if (!muse_settings_wifi_on() || !have) {
-            if (wifi_mgr_is_connected()) {
+        bool stop_wifi = !muse_settings_wifi_on() || !have;
+        wifi_stopped = wifi_stopped && stop_wifi;
+        if (stop_wifi) {
+            // A dropped connection may still have a reconnect timer pending.
+            // Cancel it once on entry, even without an IP address. Retry if a
+            // setup operation owns the gate, as for the nap below.
+            if ((!wifi_stopped || wifi_mgr_is_connected()) && app_wifi_nap()) {
                 ESP_LOGI(TAG, "wifi %s; disconnecting", have ? "off" : "forgotten");
-                wifi_mgr_disconnect();
+                wifi_stopped = true;
             }
             joined_gen = s_creds_gen;
             s_away = false;
@@ -643,10 +749,31 @@ static void boot_task(void *arg) {
     xEventGroupWaitBits(s_ready, BIT_STORAGE, pdFALSE, pdTRUE, portMAX_DELAY);
     load_creds();
     muse_app_run(muse_board_get());
+#if CONFIG_CAPABILITIES_REGISTRY
+    // The battery as a device for apps, now the board is up. Here rather than
+    // in muse_app_run(), so builds without apps keep muse_app.c as it was.
+    board_capabilities_init();
+#endif
     xEventGroupSetBits(s_ready, BIT_MUSE);
     stack_monitor_record(NULL);
     vTaskDelete(NULL);
 }
+
+#if CONFIG_MUSE_WASM_APPS || CONFIG_MUSE_AVATAR_SYNC
+// The console's setup lines: the SDK token, then the app loader (muse_apps.h).
+static bool console_line(const char *line) {
+#if CONFIG_GADGET_SDK_TOKEN_CONSOLE
+    if (sdk_token_console_command(line)) return true;
+#endif
+#if CONFIG_MUSE_AVATAR_SYNC
+    if (avatar_sync_console(line)) return true;
+#endif
+#if CONFIG_MUSE_WASM_APPS
+    if (muse_apps_console(line)) return true;
+#endif
+    return false;
+}
+#endif
 
 void muse_glue_start(void) {
     // First, before Link's Wi-Fi, BLE and tunnel and Muse's display take and
@@ -654,7 +781,14 @@ void muse_glue_start(void) {
     muse_input_power_init();
     s_ready = xEventGroupCreate();
     muse_link_register(&s_ops);
+#if CONFIG_MUSE_WASM_APPS || CONFIG_MUSE_AVATAR_SYNC
+    muse_input_set_console_hook(console_line);
+#if CONFIG_MUSE_WASM_APPS
+    muse_apps_start(noise_ctrl_send_command_result);
+#endif
+#elif CONFIG_GADGET_SDK_TOKEN_CONSOLE
     muse_input_set_console_hook(sdk_token_console_command);
+#endif
     muse_ble_set_name(identity_ble_name());
     ble_companion_t companion = {
         .svcs = muse_ble_services(),
@@ -714,6 +848,11 @@ void muse_glue_led_state(led_state_t state) {
             break;
     }
     muse_link_set_state(st);
+#if CONFIG_MUSE_AVATAR_SYNC
+    if (state == LED_STATE_UNPAIRED) muse_avatar_clear();
+    if (state == LED_STATE_UNPAIRED || state == LED_STATE_VM_SWITCHING || state == LED_STATE_PAIRING_CONFIRM_REQUIRED)
+        muse_avatar_pairing_changed();
+#endif
     // Pairing, provisioning and unpair all move the LED; pick up their config.
     keeper_kick(KEEP_RELOAD);
 }

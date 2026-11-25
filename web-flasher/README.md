@@ -1,3 +1,19 @@
+<!--
+Copyright (c) Meta Platforms, Inc. and affiliates.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+
 # Web flasher
 
 A page on GitHub Pages that flashes Muse Gadget firmware from Chrome or Edge
@@ -5,6 +21,11 @@ over Web Serial, using [ESP Web Tools](https://esphome.github.io/esp-web-tools/)
 The ESP32 CI (`.github/workflows/esp32.yml`) packages the boards listed in
 `boards.json` from its own builds, assembles the site on every run, and deploys
 it on pushes to `main`.
+
+The M5Stack AtomS3 + Atomic Voice Base profile is experimental. It uses the
+AtomS3's 8 MB flash and has no PSRAM; replies are shown as text on its display.
+Choose **M5Stack AtomS3 + Atomic Voice Base (experimental)** in the board list
+to flash it from Chrome or Edge.
 
 ## The SDK token
 

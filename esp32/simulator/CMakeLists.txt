@@ -36,6 +36,7 @@ option(MUSE_SIM_FETCH_DEPS
        ON)
 option(MUSE_SIM_SANITIZERS "Build the simulator with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(MUSE_SIM_WARNINGS_AS_ERRORS "Treat simulator warnings as errors" OFF)
+option(MUSE_SIM_EMOJI "Show emoji in captions, as CONFIG_MUSE_EMOJI does" OFF)
 
 set(MUSE_SIM_LVGL_VERSION "9.5.0")
 set(MUSE_SIM_SDL_MIN_VERSION "2.0.18")
@@ -141,7 +142,11 @@ else()
     # Both LVGL's SDL display driver and its SDL2 OS abstraction include SDL
     # headers while LVGL itself is compiled.
     target_link_libraries(lvgl PRIVATE ${MUSE_SIM_SDL_TARGET})
-    target_compile_definitions(lvgl PRIVATE _POSIX_C_SOURCE=200809L)
+    # usleep() was removed from POSIX.1-2008, so _POSIX_C_SOURCE=200809L
+    # alone hides its declaration on glibc; _DEFAULT_SOURCE re-exposes it.
+    # LVGL's pthread OS layer calls usleep(), and GCC 14+ turns the
+    # resulting implicit declaration into an error.
+    target_compile_definitions(lvgl PRIVATE _POSIX_C_SOURCE=200809L _DEFAULT_SOURCE)
 endif()
 
 set(MUSE_COMPONENT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../components/muse")
@@ -162,6 +167,8 @@ add_executable(muse_simulator
     src/sim_platform.c
     src/sim_services.c
     "${MUSE_COMPONENT_DIR}/muse_ui.c"
+    "${MUSE_COMPONENT_DIR}/muse_options.c"
+    "${MUSE_COMPONENT_DIR}/muse_options_ui.c"
     "${MUSE_COMPONENT_DIR}/muse_state.c"
     "${MUSE_COMPONENT_DIR}/muse_text.c"
     "${MUSE_COMPONENT_DIR}/muse_lang.c"
@@ -191,6 +198,11 @@ if(APPLE)
     target_link_libraries(muse_simulator PRIVATE ${MUSE_SIM_IOKIT_FRAMEWORK})
 endif()
 
+if(MUSE_SIM_EMOJI)
+    target_sources(muse_simulator PRIVATE "${MUSE_COMPONENT_DIR}/fonts/muse_font_emoji_16.c")
+    target_compile_definitions(muse_simulator PRIVATE CONFIG_MUSE_EMOJI=1)
+endif()
+
 target_compile_options(muse_simulator PRIVATE -Wall -Wextra -Wpedantic)
 if(MUSE_SIM_WARNINGS_AS_ERRORS)
     target_compile_options(muse_simulator PRIVATE -Werror)
@@ -209,6 +221,97 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_simulator.py")
+    # Reuse the simulator adapters, but include the production UI directly so
+    # the regression can check the rendered label's font and geometry.
+    get_target_property(caption_sources muse_simulator SOURCES)
+    list(REMOVE_ITEM caption_sources src/main.c "${MUSE_COMPONENT_DIR}/muse_ui.c")
+    add_executable(muse_caption_layout_test tests/caption_layout_harness.c ${caption_sources})
+    get_target_property(caption_includes muse_simulator INCLUDE_DIRECTORIES)
+    get_target_property(caption_libraries muse_simulator LINK_LIBRARIES)
+    target_include_directories(muse_caption_layout_test PRIVATE ${caption_includes})
+    target_link_libraries(muse_caption_layout_test PRIVATE ${caption_libraries})
+    get_target_property(caption_compile_options muse_simulator COMPILE_OPTIONS)
+    target_compile_options(muse_caption_layout_test PRIVATE ${caption_compile_options})
+    if(MUSE_SIM_SANITIZERS)
+        target_link_options(muse_caption_layout_test PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer)
+    endif()
+    add_test(NAME muse_caption_layout COMMAND muse_caption_layout_test)
+    add_executable(muse_theme_ui_test tests/theme_ui_harness.c ${caption_sources}
+        "${MUSE_COMPONENT_DIR}/muse_theme.c" "${MUSE_COMPONENT_DIR}/muse_theme_policy.c" "${MUSE_COMPONENT_DIR}/muse_theme_lvgl.c")
+    target_include_directories(muse_theme_ui_test PRIVATE ${caption_includes})
+    target_link_libraries(muse_theme_ui_test PRIVATE ${caption_libraries})
+    target_compile_options(muse_theme_ui_test PRIVATE ${caption_compile_options})
+    target_compile_definitions(muse_theme_ui_test PRIVATE CONFIG_MUSE_UI_THEME=1)
+    if(MUSE_SIM_SANITIZERS)
+        target_link_options(muse_theme_ui_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    endif()
+    add_test(NAME muse_theme_ui COMMAND muse_theme_ui_test)
+    set_tests_properties(muse_theme_ui PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1" TIMEOUT 30)
+    add_executable(muse_avatar_ui_test tests/avatar_ui_harness.c ${caption_sources}
+        "${MUSE_COMPONENT_DIR}/muse_avatar_render.c")
+    target_include_directories(muse_avatar_ui_test PRIVATE ${caption_includes})
+    target_link_libraries(muse_avatar_ui_test PRIVATE ${caption_libraries})
+    target_compile_options(muse_avatar_ui_test PRIVATE ${caption_compile_options})
+    target_compile_definitions(muse_avatar_ui_test PRIVATE CONFIG_MUSE_AVATAR_SYNC=1)
+    if(MUSE_SIM_SANITIZERS)
+        target_link_options(muse_avatar_ui_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    endif()
+    add_test(NAME muse_avatar_ui COMMAND muse_avatar_ui_test)
+    set_tests_properties(muse_avatar_ui PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1" TIMEOUT 30)
+    add_executable(muse_avatar_motion_ui_test tests/avatar_motion_ui_harness.c ${caption_sources}
+        "${MUSE_COMPONENT_DIR}/muse_avatar_render.c")
+    target_include_directories(muse_avatar_motion_ui_test PRIVATE ${caption_includes})
+    target_link_libraries(muse_avatar_motion_ui_test PRIVATE ${caption_libraries})
+    target_compile_options(muse_avatar_motion_ui_test PRIVATE ${caption_compile_options})
+    target_compile_definitions(muse_avatar_motion_ui_test PRIVATE CONFIG_MUSE_AVATAR_SYNC=1 CONFIG_MUSE_AVATAR_ANIMATIONS=1)
+    if(MUSE_SIM_SANITIZERS)
+        target_link_options(muse_avatar_motion_ui_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    endif()
+    add_test(NAME muse_avatar_motion_ui COMMAND muse_avatar_motion_ui_test)
+    set_tests_properties(muse_avatar_motion_ui PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1" TIMEOUT 30)
+
+    add_executable(muse_volume_swipe_test tests/volume_swipe_harness.c ${caption_sources})
+    target_include_directories(muse_volume_swipe_test PRIVATE ${caption_includes})
+    target_link_libraries(muse_volume_swipe_test PRIVATE ${caption_libraries})
+    target_compile_options(muse_volume_swipe_test PRIVATE ${caption_compile_options})
+    if(MUSE_SIM_SANITIZERS)
+        target_link_options(muse_volume_swipe_test PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer)
+    endif()
+    add_test(NAME muse_volume_swipe COMMAND muse_volume_swipe_test)
+    set_tests_properties(muse_volume_swipe PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy" TIMEOUT 30)
+    add_executable(muse_options_ui_test tests/options_ui_harness.c ${caption_sources})
+    target_include_directories(muse_options_ui_test PRIVATE ${caption_includes})
+    target_link_libraries(muse_options_ui_test PRIVATE ${caption_libraries})
+    target_compile_options(muse_options_ui_test PRIVATE ${caption_compile_options})
+    if(MUSE_SIM_SANITIZERS)
+        target_link_options(muse_options_ui_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    endif()
+    add_test(NAME muse_options_ui COMMAND muse_options_ui_test)
+    add_test(NAME muse_options_round_466 COMMAND muse_options_ui_test 466 466 1)
+    add_test(NAME muse_options_rectangle COMMAND muse_options_ui_test 320 480 0)
+    set_tests_properties(muse_options_ui muse_options_round_466 muse_options_rectangle PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1" TIMEOUT 30)
+    set_tests_properties(muse_caption_layout PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy" TIMEOUT 30)
+    add_executable(muse_latest_reply_test tests/latest_reply_harness.c ${caption_sources}
+        "${MUSE_COMPONENT_DIR}/muse_review.c"
+        "${MUSE_COMPONENT_DIR}/muse_chat_text.c")
+    target_include_directories(muse_latest_reply_test PRIVATE ${caption_includes})
+    target_link_libraries(muse_latest_reply_test PRIVATE ${caption_libraries})
+    target_compile_options(muse_latest_reply_test PRIVATE ${caption_compile_options})
+    target_compile_definitions(muse_latest_reply_test PRIVATE CONFIG_MUSE_LATEST_REPLY=1)
+    if(MUSE_SIM_SANITIZERS)
+        target_link_options(muse_latest_reply_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    endif()
+    add_test(NAME muse_latest_reply COMMAND muse_latest_reply_test)
+    set_tests_properties(muse_latest_reply PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy" TIMEOUT 30)
     find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
     add_test(
         NAME muse_simulator_headless
@@ -240,12 +343,39 @@ if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_simulator.py
     add_executable(muse_settings_text_test
         tests/settings_text_harness.c
         "${MUSE_COMPONENT_DIR}/muse_keypad.c"
+        "${MUSE_COMPONENT_DIR}/muse_lang.c"
         "${MUSE_COMPONENT_DIR}/muse_text.c"
     )
     target_include_directories(muse_settings_text_test PRIVATE
         tests/settings_fakes compat ../tests/link_fakes "${MUSE_COMPONENT_DIR}"
     )
     target_compile_definitions(muse_settings_text_test PRIVATE _POSIX_C_SOURCE=200809L)
+    add_executable(muse_settings_theme_test
+        tests/settings_text_harness.c "${MUSE_COMPONENT_DIR}/muse_keypad.c"
+        "${MUSE_COMPONENT_DIR}/muse_lang.c" "${MUSE_COMPONENT_DIR}/muse_text.c"
+        "${MUSE_COMPONENT_DIR}/muse_theme.c" "${MUSE_COMPONENT_DIR}/muse_theme_policy.c" "${MUSE_COMPONENT_DIR}/muse_theme_lvgl.c")
+    target_include_directories(muse_settings_theme_test PRIVATE tests/settings_fakes compat ../tests/link_fakes "${MUSE_COMPONENT_DIR}")
+    target_compile_definitions(muse_settings_theme_test PRIVATE _POSIX_C_SOURCE=200809L CONFIG_MUSE_UI_THEME=1)
+    target_compile_options(muse_settings_theme_test PRIVATE -Wall -Wextra -Wpedantic -ffunction-sections -fdata-sections)
+    target_link_libraries(muse_settings_theme_test PRIVATE ${MUSE_SIM_LVGL_TARGET} ${MUSE_SIM_SDL_TARGET} Threads::Threads m)
+    if(APPLE)
+        target_compile_definitions(muse_settings_theme_test PRIVATE _DARWIN_C_SOURCE)
+        target_link_options(muse_settings_theme_test PRIVATE -Wl,-dead_strip)
+        target_link_libraries(muse_settings_theme_test PRIVATE ${MUSE_SIM_IOKIT_FRAMEWORK})
+    else()
+        target_link_options(muse_settings_theme_test PRIVATE -Wl,--gc-sections)
+    endif()
+    if(MUSE_SIM_SANITIZERS)
+        target_compile_options(muse_settings_theme_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(muse_settings_theme_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    endif()
+    add_test(NAME muse_settings_theme_466 COMMAND muse_settings_theme_test 466 466 1 1.75 theme)
+    add_test(NAME muse_settings_theme_240 COMMAND muse_settings_theme_test 240 240 1 1.28 theme)
+    add_test(NAME muse_settings_theme_navigation COMMAND muse_settings_theme_test 466 466 1 1.75 theme-navigation)
+    set_tests_properties(muse_settings_theme_navigation PROPERTIES ENVIRONMENT "${MUSE_SIM_TEST_ENVIRONMENT}" TIMEOUT 30)
+    set_tests_properties(muse_settings_theme_466 muse_settings_theme_240 PROPERTIES ENVIRONMENT "${MUSE_SIM_TEST_ENVIRONMENT}" TIMEOUT 30)
+
+    add_test(NAME muse_settings_volume_sync COMMAND muse_settings_text_test 466 466 1 1.75 volume)
     target_compile_options(muse_settings_text_test PRIVATE -Wall -Wextra -Wpedantic -ffunction-sections -fdata-sections)
     target_link_libraries(muse_settings_text_test PRIVATE ${MUSE_SIM_LVGL_TARGET} ${MUSE_SIM_SDL_TARGET} Threads::Threads m)
     if(APPLE)
@@ -262,6 +392,19 @@ if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_simulator.py
         target_compile_options(muse_settings_text_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(muse_settings_text_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
     endif()
+    get_target_property(avatar_settings_sources muse_settings_text_test SOURCES)
+    add_executable(muse_settings_avatar_test ${avatar_settings_sources})
+    foreach(prop INCLUDE_DIRECTORIES LINK_LIBRARIES COMPILE_OPTIONS LINK_OPTIONS COMPILE_DEFINITIONS)
+        get_target_property(value muse_settings_text_test ${prop})
+        if(value)
+            set_property(TARGET muse_settings_avatar_test PROPERTY ${prop} "${value}")
+        endif()
+    endforeach()
+    target_compile_definitions(muse_settings_avatar_test PRIVATE CONFIG_MUSE_AVATAR_SYNC=1)
+    add_test(NAME muse_settings_avatar_466 COMMAND muse_settings_avatar_test 466 466 1 1.75 avatar)
+    add_test(NAME muse_settings_avatar_240 COMMAND muse_settings_avatar_test 240 240 1 1.28 avatar)
+    set_tests_properties(muse_settings_avatar_466 muse_settings_avatar_240 PROPERTIES
+        ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
     foreach(scenario other secure saved back)
         add_test(NAME muse_settings_xiao_${scenario}
                  COMMAND muse_settings_text_test 172 320 0 1.47 ${scenario})
@@ -328,6 +471,8 @@ if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_simulator.py
     get_property(settings_tests DIRECTORY PROPERTY TESTS)
     list(FILTER settings_tests INCLUDE REGEX "^muse_settings_")
     set_tests_properties(${settings_tests} PROPERTIES ENVIRONMENT "${MUSE_SIM_TEST_ENVIRONMENT}" TIMEOUT 30)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/avatar_theme_tests.cmake")
+
 endif()
 
 message(STATUS "Muse simulator LVGL target: ${MUSE_SIM_LVGL_TARGET}")

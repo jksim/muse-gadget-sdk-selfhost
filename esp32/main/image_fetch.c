@@ -15,7 +15,11 @@
  */
 
 #include "image_fetch.h"
+#include "vm_file_path.h"
 #include "led_status.h"
+#if CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_UC8179 || CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_IT8951
+#include "epd_panel.h"
+#endif
 #include "noise_control.h"
 #include "sdkconfig.h"
 
@@ -118,6 +122,8 @@ typedef struct {
     char *url;  // or, for a file from the VM, the request path
     bool vm;
     int row;
+    int gray_levels;
+    bool gray_started;
     image_fetch_done_cb done;
     void *user;
     esp_http_client_handle_t http;
@@ -162,6 +168,25 @@ typedef struct {
 #define TOP_ROW(f) (CENTRED(f) ? 0 : (f)->row)
 
 static atomic_bool s_busy;
+#if CONFIG_MUSE_AVATAR_SYNC
+bool image_fetch_busy(void) { return atomic_load(&s_busy); }
+#endif
+// Bands downloads have drawn, ever: see image_fetch_drawn().
+static atomic_uint s_bands_drawn;
+
+static bool draw_rect(fetch_t *f, int x, int y, int w, int h, const uint16_t *pixels) {
+#if CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_UC8179 || CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_IT8951
+    if (f->gray_levels && !f->gray_started) {
+        led_status_draw_gray_begin();
+        f->gray_started = true;
+    }
+#else
+    (void)f;
+#endif
+    if (!led_status_draw_rect(x, y, w, h, pixels)) return false;
+    atomic_fetch_add(&s_bands_drawn, 1);
+    return true;
+}
 
 // Byte-addressable internal RAM. MALLOC_CAP_INTERNAL alone also counts
 // IRAM that only takes 32-bit accesses, which malloc() never hands out.
@@ -251,7 +276,7 @@ static const char *draw_raw(fetch_t *f, int *rows_drawn) {
             err = "image runs past the last row";
             break;
         }
-        if (rows && !led_status_draw_rect(0, y, f->width, rows, (const uint16_t *)buf)) {
+        if (rows && !draw_rect(f, 0, y, f->width, rows, (const uint16_t *)buf)) {
             err = "display write failed";
             break;
         }
@@ -290,18 +315,21 @@ static UINT jpeg_out(JDEC *jd, void *bitmap, JRECT *rect) {
     int w = rect->right - rect->left + 1;
     int h = rect->bottom - rect->top + 1;
     const uint8_t *rgb = bitmap;
+    if (w <= 0 || h <= 0 || w * h > JPEG_MCU_PIXELS) return 0;
     for (int i = 0; i < w * h; i++, rgb += 3) {
         uint16_t px = ((rgb[0] & 0xF8) << 8) | ((rgb[1] & 0xFC) << 3) | (rgb[2] >> 3);
         f->mcu[i] = (uint16_t)((px >> 8) | (px << 8));
     }
-    return led_status_draw_rect(f->x0 + rect->left, f->y0 + rect->top, w, h, f->mcu);
+    return draw_rect(f, f->x0 + rect->left, f->y0 + rect->top, w, h, f->mcu);
 }
 
 static const char *draw_jpeg(fetch_t *f, int *out_w, int *out_h, int *out_scale) {
     void *pool = malloc(JPEG_POOL_BYTES);
     if (!pool) return "out of memory";
     const char *err = NULL;
-    JDEC jd;
+    // The ROM decoder doesn't clear this, and a JPEG with no SOF0 would
+    // otherwise decode with whatever MCU size was on the stack.
+    JDEC jd = {0};
     JRESULT rc = jd_prepare(&jd, jpeg_in, pool, JPEG_POOL_BYTES, f);
     if (rc == JDR_OK) {
         // Shrink by the smallest power of two that fits below `row`.
@@ -542,7 +570,7 @@ static const char *draw_jpeg(fetch_t *f, int *out_w, int *out_h, int *out_scale)
                     o[1] = v & 0xFF;
                 }
             }
-            if (!led_status_draw_rect(f->x0, f->y0 + y, *out_w, n, (const uint16_t *)band)) {
+            if (!draw_rect(f, f->x0, f->y0 + y, *out_w, n, (const uint16_t *)band)) {
                 err = "display write failed";
             }
         }
@@ -812,13 +840,27 @@ static void fetch_task(void *arg) {
             fail = draw_raw(f, &rows);
             result.height = rows;
         }
-        // Show what arrived, even if the download broke off.
-        led_status_draw_done();
+#if CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_UC8179 || CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_IT8951
+        if (f->gray_levels) {
+            if (fail) {
+                if (f->gray_started) led_status_show_animation();
+            } else if (!led_status_draw_gray_done(f->gray_levels)) {
+                led_status_show_animation();
+                result.code = "display_failed";
+                fail = "grayscale refresh failed";
+            }
+        } else
+#endif
+        {
+            // Show what arrived, even if the download broke off.
+            led_status_draw_done();
+        }
         if (fail && f->timed_out) fail = "download timed out";
         if (fail) {
             result.message = fail;
             if (f->low_memory) result.code = "out_of_memory";
-            else if (!f->timed_out && strcmp(fail, "download failed") != 0) {
+            else if (!f->timed_out && strcmp(result.code, "download_failed") == 0
+                     && strcmp(fail, "download failed") != 0) {
                 result.code = "invalid_image";
             }
         } else {
@@ -845,25 +887,7 @@ static void fetch_task(void *arg) {
 
 // GET /fs/raw/ and the path, without its leading slashes, percent-encoded
 // but for its slashes. NULL if out of memory.
-static char *vm_request_path(const char *path) {
-    while (*path == '/') path++;
-    size_t prefix = strlen(VM_PATH_PREFIX);
-    char *out = malloc(prefix + strlen(path) * 3 + 1);
-    if (!out) return NULL;
-    memcpy(out, VM_PATH_PREFIX, prefix);
-    char *p = out + prefix;
-    for (const unsigned char *c = (const unsigned char *)path; *c; c++) {
-        if (isalnum(*c) || strchr("-._~/", *c)) {
-            *p++ = (char)*c;
-        } else {
-            *p++ = '%';
-            *p++ = "0123456789ABCDEF"[*c >> 4];
-            *p++ = "0123456789ABCDEF"[*c & 15];
-        }
-    }
-    *p = '\0';
-    return out;
-}
+static char *vm_request_path(const char *path) { return vm_file_request_path(path); }
 
 // Allocate the largest safe range once. Future allocations must leave Noise's
 // TX margin: the task stack, either decoder or raw rows, and the queued GET.
@@ -905,7 +929,8 @@ static bool vm_allocate_body(fetch_t *f, size_t stack, int width) {
         && heap_caps_get_largest_free_block(BYTE_CAPS) >= block_need;
 }
 
-static bool start(const char *target, bool vm, int row, image_fetch_done_cb done,
+static bool start(const char *target, bool vm, int row, int gray_levels,
+                  image_fetch_done_cb done,
                   void *user, const char **code, const char **message) {
     int width, height;
     if (!led_status_display_info(&width, &height)) {
@@ -976,6 +1001,7 @@ static bool start(const char *target, bool vm, int row, image_fetch_done_cb done
     f->vm = vm;
     f->https = https;
     f->row = row;
+    f->gray_levels = gray_levels;
     f->done = done;
     f->user = user;
     f->width = width;
@@ -994,12 +1020,32 @@ static bool start(const char *target, bool vm, int row, image_fetch_done_cb done
 
 bool image_fetch_start(const char *url, int row, image_fetch_done_cb done,
                        void *user, const char **code, const char **message) {
-    return start(url, false, row, done, user, code, message);
+    return start(url, false, row, 0, done, user, code, message);
 }
+
+#if CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_UC8179 || CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_IT8951
+bool image_fetch_start_gray(const char *url, int row, int levels, image_fetch_done_cb done,
+                            void *user, const char **code, const char **message) {
+    return start(url, false, row, levels, done, user, code, message);
+}
+#endif
 
 bool image_fetch_start_vm(const char *path, int row, image_fetch_done_cb done,
                           void *user, const char **code, const char **message) {
-    return start(path, true, row, done, user, code, message);
+    return start(path, true, row, 0, done, user, code, message);
+}
+
+bool image_fetch_claim(void) {
+    bool expected = false;
+    return atomic_compare_exchange_strong(&s_busy, &expected, true);
+}
+
+void image_fetch_release(void) {
+    atomic_store(&s_busy, false);
+}
+
+unsigned image_fetch_drawn(void) {
+    return atomic_load(&s_bands_drawn);
 }
 
 #else
@@ -1025,5 +1071,9 @@ bool image_fetch_start_vm(const char *path, int row, image_fetch_done_cb done,
     *message = "no display";
     return false;
 }
+
+bool image_fetch_claim(void) { return true; }
+void image_fetch_release(void) {}
+unsigned image_fetch_drawn(void) { return 0; }
 
 #endif

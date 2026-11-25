@@ -14,10 +14,12 @@
 
 # FoloToy AI Passport: ESP32-C3 (single core, 400 KB SRAM), 8 MB embedded
 # flash in DIO mode, no PSRAM. Load last, after sdkconfig.muse. As on the
-# Waveshare C6 there is no Hatch session: voice notes go over Link's session
+# Waveshare C6 there is no voice session: voice notes go over Link's session
 # and replies show as text. The C3 has ~110 KB less SRAM than the C6, so
 # Link's TLS, Wi-Fi and BLE buffers are trimmed at least as hard.
 CONFIG_IDF_TARGET="esp32c3"
+CONFIG_MUSE_DEVICE_MODEL_ID="muse-gadget-ai-passport"
+CONFIG_MUSE_DEVICE_MODEL_NAME="FoloToy AI Passport"
 CONFIG_MUSE_BOARD_AI_PASSPORT=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
 # UART0's TX is GPIO21, the backlight: keep the console off it. The ROM
@@ -53,8 +55,6 @@ CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=32
 
 CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=12
 CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=12
-CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=12
-CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT=15
 
 # On the C3, IRAM and DRAM are the same 400 KB of SRAM, so every function kept
 # in IRAM is heap the UI, Wi-Fi and BLE don't get. Nothing here has to run
@@ -83,8 +83,8 @@ CONFIG_BT_CTRL_BLE_SCAN=n
 CONFIG_BT_CTRL_BLE_SCAN_DUPL=n
 CONFIG_BT_CTRL_DTM_ENABLE=n
 CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT=n
-CONFIG_BT_NIMBLE_ACL_BUF_COUNT=8
-CONFIG_BT_NIMBLE_HCI_EVT_HI_BUF_COUNT=8
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=8
+CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT=8
 
 # Fewer preallocated Wi-Fi receive buffers; the dynamic ones grow on demand.
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=5

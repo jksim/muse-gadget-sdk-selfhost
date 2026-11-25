@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compile the Waveshare round boards' hold-the-face talk against LVGL fakes."""
+"""Compile the Waveshare round boards' hold-the-face talk (and the 1.46's PWR key) against LVGL fakes."""
 import os
 from pathlib import Path
 import re
@@ -23,7 +23,9 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-BOARDS = ("board_waveshare_s3_146.c", "board_waveshare_s3_143c.c")
+BOARDS = ("board_waveshare_s3_146.c", "board_waveshare_s3_143c.c", "board_waveshare_s3_185c.c")
+# The 1.85C has no scroll check (a slow swipe off the face still talks there).
+SCROLL_CHECKED = ("board_waveshare_s3_146.c", "board_waveshare_s3_143c.c")
 
 
 def function(source, name):
@@ -51,22 +53,25 @@ typedef struct { int unused; } lv_indev_t;
 typedef struct { int unused; } lv_obj_t;
 typedef struct { int unused; } muse_gpio_button_t;
 static muse_gpio_button_t s_boot;
+__attribute__((unused)) static muse_gpio_button_t s_pwr;   /* the 1.46's PWR key */
+static unsigned pwr_edges;
 static lv_indev_t indev, *s_touch_indev = &indev;
 static lv_obj_t tileview;
 static TickType_t now;
-static bool pressed, scrolling, face = true;
+static bool pressed, scrolling, volume_swiping, face = true;
 static TickType_t xTaskGetTickCount(void) { return now; }
-static unsigned muse_gpio_button_poll(muse_gpio_button_t *b) { (void)b; return 0; }
+static unsigned muse_gpio_button_poll(muse_gpio_button_t *b) { return b == &s_pwr ? pwr_edges : 0; }
 static int lv_indev_get_state(lv_indev_t *i) { (void)i; return pressed; }
 __attribute__((unused)) static lv_obj_t *lv_indev_get_scroll_obj(lv_indev_t *i) { (void)i; return scrolling ? &tileview : NULL; }
 static bool muse_ui_face_active(void) { return face; }
+__attribute__((unused)) static bool muse_ui_volume_swiping(void) { return volume_swiping; }
 %(poll)s
 static unsigned step(TickType_t ms) { now += ms; return poll_buttons(); }
 static void hold_talks(void) {
     pressed = true;
     assert(step(10) == 0);
     assert(step(400) == 0);
-    assert(step(100) == MUSE_BTN_TALK_PRESS);
+    assert(step(100) == (MUSE_BTN_TALK_PRESS | MUSE_BTN_TALK_HELD));
     assert(step(10) == 0);
     pressed = false;
     assert(step(10) == MUSE_BTN_TALK_RELEASE);
@@ -85,9 +90,21 @@ static void slow_swipe_never_talks(void) {
     assert(step(10) == 0);   /* No talk started, so no release either. */
     pressed = true;          /* The next press is a fresh hold. */
     assert(step(10) == 0);
-    assert(step(500) == MUSE_BTN_TALK_PRESS);
+    assert(step(500) == (MUSE_BTN_TALK_PRESS | MUSE_BTN_TALK_HELD));
     pressed = false;
     assert(step(10) == MUSE_BTN_TALK_RELEASE);
+}
+static void volume_drag_never_talks(void) {
+    pressed = true;
+    assert(step(10) == 0);
+    volume_swiping = true;
+    assert(step(100) == 0);
+    assert(step(600) == 0);
+    volume_swiping = false;  /* Remains cancelled for the rest of this touch. */
+    assert(step(600) == 0);
+    pressed = false;
+    assert(step(10) == 0);
+    hold_talks();
 }
 static void off_face_press_never_talks(void) {
     face = false;
@@ -98,12 +115,22 @@ static void off_face_press_never_talks(void) {
     pressed = false;
     assert(step(10) == 0);
 }
+static void pwr_is_power_never_talk(void) {
+    pwr_edges = MUSE_BTN_TALK_PRESS;     /* the PWR key's own press edge */
+    assert(step(10) == MUSE_BTN_POWER_PRESS);
+    pwr_edges = 0;
+    assert(step(1000) == 0);
+    pwr_edges = MUSE_BTN_TALK_RELEASE;
+    assert(step(10) == MUSE_BTN_POWER_RELEASE);
+}
 int main(int argc, char **argv) {
     assert(argc == 2);
     switch (atoi(argv[1])) {
     case 0: hold_talks(); break;
     case 1: slow_swipe_never_talks(); break;
     case 2: off_face_press_never_talks(); break;
+    case 3: pwr_is_power_never_talk(); break;
+    case 4: volume_drag_never_talks(); break;
     default: return 2;
     }
     return 0;
@@ -136,8 +163,10 @@ class WaveshareTouchHold(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def run_case(self, case):
+    def run_case(self, case, boards=BOARDS):
         for name, binary in self.binaries.items():
+            if name not in boards:
+                continue
             with self.subTest(board=name):
                 subprocess.run([str(binary), case], check=True)
 
@@ -145,7 +174,22 @@ class WaveshareTouchHold(unittest.TestCase):
         self.run_case("0")
 
     def test_slow_swipe_off_face_never_talks(self):
-        self.run_case("1")
+        self.run_case("1", boards=SCROLL_CHECKED)
+
+    def test_volume_drag_cancels_hold_until_next_touch(self):
+        self.run_case("4")
 
     def test_press_starting_off_face_never_talks(self):
         self.run_case("2")
+
+    def test_146_pwr_key_is_the_power_button(self):
+        self.run_case("3", boards=("board_waveshare_s3_146.c",))
+
+    def test_146_power_off_keeps_the_pwr_pull_up_in_deep_sleep(self):
+        source = (ROOT / "components" / "muse" / "boards" / "board_waveshare_s3_146.c").read_text()
+        body = source[source.index("static esp_err_t power_off(void)"):]
+        body = body[:body.index("\n}\n")]
+        sleep = body.index("esp_deep_sleep_start()")
+        for call in ("esp_sleep_enable_ext0_wakeup(PWR_GPIO, 0)", "rtc_gpio_pullup_en(PWR_GPIO)",
+                     "rtc_gpio_pulldown_dis(PWR_GPIO)"):
+            self.assertLess(body.index(call), sleep, call)

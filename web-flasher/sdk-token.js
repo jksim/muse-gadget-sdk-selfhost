@@ -27,12 +27,24 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Resolves when the gadget has stored the token; rejects with the reason
 // otherwise. Opening the port can restart the gadget, so the command is sent
 // again until it answers, for up to `timeoutMs`.
-export async function sendSdkToken(port, token, { timeoutMs = 25000, retryMs = 3000 } = {}) {
+export async function sendSdkToken(port, token, { timeoutMs = 25000, retryMs = 3000, openTimeoutMs = 3000, openRetryMs = 100, onWriteTimeout = () => {} } = {}) {
   if (!isSdkToken(token)) throw new LocalizedError("token.invalid");
-  try {
-    await port.open({ baudRate: 115200 });
-  } catch (e) {
-    throw new LocalizedError("token.openFailed", { error: e.message });
+  // ESP Web Tools starts an asynchronous close when its dialog closes. Web
+  // Serial can clear both streams before that close finishes, so open may
+  // still report InvalidStateError. Never close a port owned by another send.
+  const openingDeadline = Date.now() + openTimeoutMs;
+  for (;;) {
+    try {
+      await port.open({ baudRate: 115200 });
+      break;
+    } catch (e) {
+      const remaining = openingDeadline - Date.now();
+      if (e.name === "InvalidStateError" && !port.readable && !port.writable && remaining > 0) {
+        await sleep(Math.min(openRetryMs, remaining));
+        continue;
+      }
+      throw new LocalizedError("token.openFailed", { error: e.message });
+    }
   }
   // Leave EN and BOOT alone on boards whose bridge drives them.
   await port.setSignals({ dataTerminalReady: false, requestToSend: false }).catch(() => {});
@@ -61,13 +73,30 @@ export async function sendSdkToken(port, token, { timeoutMs = 25000, retryMs = 3
     await sleep(1000);   // a gadget restarted by the port opening boots first
     while (!answer && Date.now() < deadline) {
       const writer = port.writable.getWriter();
+      let timer;
+      let write;
       try {
-        await writer.write(new TextEncoder().encode(`\n>sdk_token=${token}\n`));
+        write = writer.write(new TextEncoder().encode(`\n>sdk_token=${token}\n`));
+        const finished = await Promise.race([
+          write.then(() => true),
+          new Promise((resolve) => {
+            timer = setTimeout(() => resolve(false), Math.max(0, deadline - Date.now()));
+          }),
+        ]);
+        if (!finished) {
+          const error = new LocalizedError("token.writeTimeout");
+          onWriteTimeout(error);
+          throw error;
+        }
       } finally {
+        clearTimeout(timer);
+        // A paced write can still hold the underlying serial writer. Keep
+        // the send pending until it settles so the page keeps the port reserved.
+        await write?.catch(() => {});
         writer.releaseLock();
       }
-      const wait = Date.now() + retryMs;
-      while (!answer && Date.now() < wait) await sleep(100);
+      const wait = Math.min(deadline, Date.now() + retryMs);
+      while (!answer && Date.now() < wait) await sleep(Math.min(100, wait - Date.now()));
     }
   } finally {
     await reader.cancel().catch(() => {});

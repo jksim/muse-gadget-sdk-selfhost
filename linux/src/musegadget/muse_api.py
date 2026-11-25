@@ -25,20 +25,25 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from musegadget import __version__
+from musegadget import __version__, server_hosts, tls
 
 log = logging.getLogger(__name__)
 
 API_BASE = "https://api.muse.ai"
 FETCH_PATH = "/fetch_vms"
 REFRESH_PATH = "/device_token/refresh"
+FETCH_TIMEOUT_S = 15   # the VM lookup's socket timeout (callers may bound the whole lookup by it)
 
 
 def api_root(api_url_v2: str = "") -> str:
     """The URL that API paths are appended to: ``api_url_v2``, or the Muse API.
 
     ``api_url`` is ignored. Only older firmware reads it, adding ``/hatch``.
+    A base this client doesn't allow (``server_hosts``) gives the Muse API.
     """
+    if not server_hosts.api_allowed(api_url_v2):
+        log.warning("saved Muse API server not allowed; using the default")
+        api_url_v2 = ""
     return (api_url_v2 or API_BASE).rstrip("/")
 
 
@@ -58,12 +63,9 @@ def user_agent() -> str:
     )
 
 
-def _urlopen(req: urllib.request.Request, context: ssl.SSLContext | None):
-    # Pass a context only when one was provisioned, so the default path makes
-    # exactly the call it always has.
-    if context is None:
-        return urllib.request.urlopen(req, timeout=15)
-    return urllib.request.urlopen(req, timeout=15, context=context)
+def _urlopen(req: urllib.request.Request, context: ssl.SSLContext | None, timeout: float = 15):
+    # A provisioned CA replaces the checked system store.
+    return urllib.request.urlopen(req, timeout=timeout, context=context or tls.client_context())
 
 
 def fetch_vms_with_status(
@@ -81,7 +83,7 @@ def fetch_vms_with_status(
     req.add_header("X-API-Version", "1.0.0")
     req.add_header("User-Agent", user_agent())
     try:
-        with _urlopen(req, context) as resp:
+        with _urlopen(req, context, FETCH_TIMEOUT_S) as resp:
             status = resp.getcode()
             data = json.loads(resp.read())
     except urllib.error.HTTPError as exc:

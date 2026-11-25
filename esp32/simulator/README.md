@@ -72,6 +72,8 @@ available and LVGL was built with that configuration. After one successful
 fetch, CMake's
 `-DFETCHCONTENT_FULLY_DISCONNECTED=ON` option reuses the populated dependency
 cache without network access. Installing SDL2 with Homebrew is optional.
+Add `-DMUSE_SIM_EMOJI=ON` to show emoji in captions, as the firmware's
+`CONFIG_MUSE_EMOJI` does.
 
 ## Automated tests
 
@@ -188,7 +190,9 @@ Supported scenario keys are:
 - `ble`: `off`, `advertising`, or `connected`; plus `passkey` and `paired`
 - `link`: `boot`, `unpaired`, `pairing`, `confirm`, `connecting`, `online`,
   `offline`, or `error`
-- `speaker`, `brightness`, and `advance` in milliseconds
+- `options`: the reply option picker's answers, separated by `|`
+- `image`: fill the image view with a six-digit RGB hex colour, or `hide`
+- `speaker`, `call` (preview the live-call layout), `brightness`, and `advance` in milliseconds
 
 Invalid options and scenario values return a nonzero exit status and identify
 the bad line.

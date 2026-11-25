@@ -61,7 +61,7 @@ void noise_ctrl_init(const char *node_id, const char *display_name,
 
 void noise_ctrl_set_command_cb(noise_ctrl_command_cb cb);
 
-// Called from the session task with the agent's name (GET /identity) once per
+// Called from the session task with the agent's name (GET /api/gadget/me) once per
 // Noise session, shortly after the device registers.
 typedef void (*noise_ctrl_agent_name_cb)(const char *name);
 
@@ -69,6 +69,10 @@ void noise_ctrl_set_agent_name_cb(noise_ctrl_agent_name_cb cb);
 
 // Override the Noise host. NULL or empty restores the compiled default.
 void noise_ctrl_set_host(const char *host);
+
+// The node id link.register sends from the next registration on: setup gives
+// a device set up by earlier firmware its new id without a restart.
+void noise_ctrl_set_node_id(const char *node_id);
 
 // Off (the default), the session checks for traffic every tick. On, once it
 // has been quiet POWER_SAVE_QUIET_MS, every POWER_SAVE_POLL_MS instead, so the
@@ -87,6 +91,11 @@ void noise_ctrl_disconnect(void);
 bool noise_ctrl_reconnect(const char *network_ssid);
 
 bool noise_ctrl_is_connected(void);
+#if CONFIG_MUSE_AVATAR_SYNC
+// Copy the VM bound to this session; never returns its token. May be unknown
+// before the first connection after boot.
+bool noise_ctrl_copy_vm_id(char *out, size_t capacity);
+#endif
 
 // From noise_ctrl_connect() until noise_ctrl_disconnect(), connected or not:
 // the session reconnects by itself meanwhile.
@@ -95,6 +104,12 @@ bool noise_ctrl_is_running(void);
 void noise_ctrl_send_command_result(
     noise_ctrl_session_generation_t session_generation,
     const char *request_id, cJSON *result);
+
+// Builds the device.health payload object; the caller owns it. Also embedded in
+// bug.report so a filed bug carries the connectivity history. The bug.report
+// copy holds the full history but leaves out the SSID, like the rest of the
+// report's explicit fields; device.health holds only the recent events.
+cJSON *noise_ctrl_device_health_json(bool for_bug_report);
 
 // ---- Extra daemon requests on this session (CONFIG_HOMEHUB_DAEMON_REQUESTS) ----
 //

@@ -83,6 +83,32 @@ class HelperTaskContractTest(unittest.TestCase):
             self.assertIn(plain, internal)
             self.assertNotIn(caps, internal)
 
+    def test_waveshare_175c_opts_into_psram_setup_stacks(self) -> None:
+        overlay = (ROOT / "devices" / "sdkconfig.muse-waveshare-s3-175c").read_text()
+        # The gate in helper_task.h only takes effect where code and rodata
+        # run from PSRAM; the 1.75C overlay sets all three, like the
+        # StopWatch, so its 8 KB lookup stack leaves internal RAM.
+        self.assertIn("CONFIG_HOMEHUB_SETUP_TASKS_IN_PSRAM=y", overlay)
+        self.assertIn("CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y", overlay)
+        self.assertIn("CONFIG_SPIRAM_RODATA=y", overlay)
+        self.assertIn("CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024", overlay)
+
+    def test_aipi_lite_opts_into_psram_setup_stacks(self) -> None:
+        overlay = (ROOT / "devices" / "sdkconfig.muse-aipi").read_text()
+        # The AIPI Lite's largest free internal block is about 7 KB once
+        # Wi-Fi, BLE and the tunnel are up (#384): the 8 KB Muse VM lookup
+        # stack only fits in PSRAM. The gate in helper_task.h takes effect
+        # only where code and rodata run from PSRAM, and the static buffers
+        # need BSS in PSRAM; the overlay sets all of them.
+        for line in (
+            "CONFIG_HOMEHUB_SETUP_TASKS_IN_PSRAM=y",
+            "CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y",
+            "CONFIG_SPIRAM_RODATA=y",
+            "CONFIG_MUSE_STATIC_BUFFERS_IN_PSRAM=y",
+            "CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y",
+        ):
+            self.assertIn(line, overlay.splitlines())
+
     def test_setup_tasks_do_not_choose_psram_stacks_themselves(self) -> None:
         for path in (APP_C, BLE_SERVER_C):
             source = _strip_comments(path.read_text())
@@ -98,23 +124,17 @@ class HelperTaskContractTest(unittest.TestCase):
         app = _strip_comments(APP_C.read_text())
         ble = _strip_comments(BLE_SERVER_C.read_text())
 
-        # start_confirm_timeout() starts whichever worker it is handed.
-        confirm = _function_body(app, "static BaseType_t start_confirm_timeout(")
-        self.assertIn("helper_task_create(task,", confirm)
-        confirm_workers = set(re.findall(r"start_confirm_timeout\(\s*(\w+)\s*,", app))
-        self.assertEqual(confirm_workers, {"confirm_timeout_task", "confirmed_idle_timeout_task"})
-
         started = {
             (APP_C.name, name)
             for name in re.findall(r"helper_task_create\(\s*(\w+)\s*,", app)
             if name != "task"
         }
-        started |= {(APP_C.name, name) for name in confirm_workers}
         started |= {
             (BLE_SERVER_C.name, name)
             for name in re.findall(r"helper_task_create\(\s*(\w+)\s*,", ble)
         }
         self.assertIn((APP_C.name, "scan_refresh_task"), started)
+        self.assertIn((APP_C.name, "confirm_timeout_task"), started)
         self.assertIn((BLE_SERVER_C.name, "provision_task"), started)
 
         sources = {APP_C.name: app, BLE_SERVER_C.name: ble}
@@ -123,12 +143,6 @@ class HelperTaskContractTest(unittest.TestCase):
             self.assertIn("helper_task_delete(NULL);", body, f"{name} must free its WithCaps stack")
             self.assertNotIn("vTaskDelete(", body, f"{name} leaks a WithCaps stack")
             self.assertNotRegex(body, r"\breturn\s*;", f"{name} exits without deleting itself")
-
-        # A pending confirmation timer is cancelled (disconnect, new session)
-        # before it ever fires: that path frees the stack too.
-        cancel = _function_body(app, "static uint32_t advance_confirm_generation_locked(")
-        self.assertIn("helper_task_delete(s_confirm_timeout_task);", cancel)
-        self.assertNotIn("vTaskDelete(s_confirm_timeout_task)", app)
 
 
 if __name__ == "__main__":

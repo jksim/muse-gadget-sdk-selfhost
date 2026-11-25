@@ -34,6 +34,9 @@ typedef uint8_t lv_align_t;
 #endif
 
 #include "muse_state.h"
+#if CONFIG_MUSE_MOTION_GESTURES
+#include "muse_motion_core.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,7 +45,7 @@ extern "C" {
 /*
  * What Muse needs from the hardware. Each file in boards/ fills one of these in
  * and returns it from muse_board_get(). Everything above this line (UI, voice
- * loop, settings, Hatch) is shared; Wi-Fi and BLE belong to Home Link.
+ * loop, settings, Muse chat) is shared; Wi-Fi and BLE belong to Home Link.
  */
 
 /* Button edges reported by poll_buttons(). */
@@ -69,6 +72,9 @@ extern "C" {
 #define MUSE_BTN_REVIEW_PREV  (1u << 15)
 #define MUSE_BTN_REVIEW_NEXT  (1u << 16)
 #endif
+/* With TALK_PRESS: reported once a hold passes its threshold (a finger held on
+ * the face to talk), not at the press's own edge, so it never confirms pairing. */
+#define MUSE_BTN_TALK_HELD    (1u << 17)
 
 /* Where a button's icon goes on screen: beside the button, inside the panel. */
 typedef struct {
@@ -166,6 +172,11 @@ typedef struct {
      * light sleep), the task is notified or timeout_ms passes, so the
      * buttons needn't be polled. NULL: polled. */
     void (*wait_buttons)(int timeout_ms);
+#if CONFIG_MUSE_MOTION_GESTURES
+    /* Owned by the input task; read returns ESP_ERR_NOT_FINISHED for no new sample. */
+    esp_err_t (*motion_enable)(bool enable);
+    esp_err_t (*motion_read)(muse_motion_sample_t *out);
+#endif
     esp_err_t (*read_power)(muse_power_t *out);
     /* Turns the board off; returns only on failure. NULL: it can't from
      * software (a physical switch does), and Settings has no Power off. */

@@ -84,6 +84,21 @@ def with_device(live, run_command, check):
     return asyncio.run(scenario())
 
 
+def test_the_linux_client_reads_the_agents_name_from_the_gadget_api(live):
+    async def scenario():
+        session = link_session(live, run_command=lambda *a: {"ok": True})
+        stop = asyncio.Event()
+        task = asyncio.ensure_future(session.run(stop))
+        try:
+            await wait_for(lambda: session.muse_name is not None)
+            return session.muse_name
+        finally:
+            stop.set()
+            await asyncio.wait_for(task, 5)
+
+    assert asyncio.run(scenario()) == "Clio"
+
+
 def test_invoke_returns_the_devices_payload(live):
     def run_command(command, params, timeout_ms):
         return {"ok": True, "payload": {"command": command, "params": params}}

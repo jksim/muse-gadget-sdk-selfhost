@@ -20,12 +20,36 @@ import time
 
 import pytest
 
+from musegadget import config
 from musegadget.ble_framing import ChunkAssembler, encode_chunks
 from musegadget.ble_setup import ProvisionFailed, SetupController
 from musegadget.identity import Identity
 from musegadget.pairing import PairingState
 
-from test_pairing import APP, Mobile, client_finished_record, hello, make_device
+import test_pairing
+from test_pairing import Mobile
+
+# With gadget node ids on, a new pairing offers gadget-000001, so the
+# transcript the app checks carries it: the gadget vector. (Off, the default,
+# it offers homelink-000001: test_device_info_without_gadget_node_ids.)
+APP = test_pairing.APP_GADGET
+
+
+@pytest.fixture(autouse=True)
+def gadget_node_ids(monkeypatch):
+    monkeypatch.setenv(config.GADGET_NODE_ID_ENV, "1")
+
+
+def hello(**overrides) -> dict:
+    return test_pairing.hello(APP, **overrides)
+
+
+def client_finished_record() -> dict:
+    return test_pairing.client_finished_record(APP)
+
+
+def make_device():
+    return test_pairing.make_device(APP)
 
 
 class FakeTransport:
@@ -125,8 +149,9 @@ PROVISION = {
     "refresh_token": "device-refresh",
     "token_type": "device",
     "username": "someone",
-    "api_url": "https://legacy-api.example",
-    "api_url_v2": "https://api.example",
+    "api_url": "https://hatch-api.meta.ai",
+    "api_url_v2": "https://api.muse.ai",
+    "noise_host": "hatch.metaaivm.com",
 }
 
 
@@ -169,8 +194,8 @@ def test_full_setup_flow():
     saved = h.saved[0]
     assert (saved.access_token, saved.refresh_token, saved.username) == (
         "device-access", "device-refresh", "someone")
-    assert (saved.api_url, saved.api_url_v2) == (
-        "https://legacy-api.example", "https://api.example")
+    assert (saved.api_url, saved.api_url_v2, saved.noise_host) == (
+        "https://hatch-api.meta.ai", "https://api.muse.ai", "hatch.metaaivm.com")
     assert h.pairing.state is PairingState.PROVISIONING
 
 
@@ -359,3 +384,11 @@ def test_provision_refusal_without_session_keys_does_not_deadlock():
     worker.join(2.0)
     assert not worker.is_alive(), "provision refusal deadlocked on the state lock"
     assert h.pairing.encrypt_status("probe") is None
+
+
+def test_device_info_without_gadget_node_ids(monkeypatch):
+    # Off by default.
+    monkeypatch.delenv(config.GADGET_NODE_ID_ENV)
+    h = Harness()
+    h.send({"action": "get_device_info"})
+    assert h.transport.messages[-1]["node_id"] == test_pairing.APP["node_id"] == "homelink-000001"

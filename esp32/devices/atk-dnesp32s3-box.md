@@ -1,9 +1,26 @@
+<!--
+Copyright (c) Meta Platforms, Inc. and affiliates.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+
 # ALIENTEK ATK-DNESP32S3-BOX
 
 This profile runs Muse's avatar, push-to-talk, a two-key menu, images, BLE
 setup, Wi-Fi and the home-network tunnel on the **ATK-DNESP32S3-BOX V1.1**
 (the silkscreen on the back of the board says V1.1). It is not a profile for
-ALIENTEK's BOX0, BOX2 or BOX3, which use other pins.
+ALIENTEK's BOX0, BOX2 or BOX3, which use other pins; the BOX2 has its own
+([setup](atk-dnesp32s3-box2.md)).
 
 The box has an ATK-MWS3S N16R8 module (16 MB flash, 8 MB octal PSRAM), a
 320×240 ST7789 LCD on an 8-bit i80 bus, one ES8311 codec for the speaker and

@@ -20,8 +20,35 @@ menu "ESP32 Device SDK"
         help
             The product name shown in boot banners, log messages, and
             diagnostic text. Does not affect protocol identifiers or
-            backend strings. Internal builds override this to match
-            the shipping product name.
+            backend strings. A product built on this SDK can override this
+            with its own name.
+
+    config MUSE_DEVICE_MODEL_ID
+        string "Device model id"
+        default "muse-gadget"
+        help
+            The hardware model this device registers with Muse (model_id in
+            link.register): 1 to 64 lowercase letters, digits and hyphens.
+            Profiles of the same hardware share one id. Each board overlay in
+            devices/ sets its own. See protocols/DEVICE.md.
+
+    config MUSE_DEVICE_MODEL_NAME
+        string "Device model name"
+        default "Muse Gadget"
+        help
+            The hardware's name as people know it, sent to Muse as
+            metadata.model_name in link.register: 1 to 128 printable ASCII
+            characters, without " or \. Each board overlay in devices/ sets
+            its own.
+
+    config MUSE_DEVICE_GUIDE
+        string "Device guide (Markdown file)"
+        default "main/guide.md"
+        help
+            The Markdown file device.guide returns to Muse: what the device
+            is, its controls and its limits. A relative path is looked up in
+            the project directory, then in esp32/. The build fails if the
+            guide is over 4096 bytes. See protocols/DEVICE.md.
 
     config GADGET_SDK_TOKEN
         string "Muse Gadgets SDK token"
@@ -40,8 +67,20 @@ menu "ESP32 Device SDK"
         help
             Print a prominent warning during each build while
             CONFIG_GADGET_SDK_TOKEN is empty. The build still succeeds.
-            Internal builds that intentionally ship without an SDK token
-            turn this off.
+            Builds that intentionally ship without an SDK token turn this
+            off.
+
+    config GADGET_SDK_TOKEN_CONSOLE
+        bool "SDK token and Wi-Fi proxy provisioning over the console"
+        default y
+        help
+            Accept sdk_token= and wifi_proxy= setup commands over the serial
+            console. Boards without the Muse UI start UART/USB reader tasks;
+            Muse boards use their existing console. Disable this for products
+            that do not use serial provisioning, avoiding those tasks and
+            their driver buffers. Logging, saved Wi-Fi networks, proxy
+            transport, and token configuration through other paths are
+            unchanged.
 
     config HOMEHUB_WIFI_MIN_MODEM
         bool "Wi-Fi minimum modem power saving at startup"
@@ -71,6 +110,19 @@ menu "ESP32 Device SDK"
             Password for CONFIG_HOMEHUB_WIFI_SSID. Ignored when the SSID
             override is empty.
 
+    config HOMEHUB_CUSTOM_SERVER_HOSTS
+        bool "Accept any server host (development only)"
+        default n
+        help
+            Pairing names the hosts the device sends its account and VM
+            credentials to (api_url, api_url_v2 and noise_host), and so does
+            the Muse host setting on boards with the full UI. Without this
+            option the device takes only the Muse app's own
+            (components/muse/muse_server_hosts.h): it refuses another and
+            uses the default in place of another it has saved. Turn it on
+            only to point a development build at your own servers; never
+            ship it.
+
     config HOMEHUB_TOKEN_REFRESH_INTERVAL_DAYS
         int "Proactive device token refresh interval (days, 0 = disabled)"
         range 0 365
@@ -94,18 +146,19 @@ menu "ESP32 Device SDK"
         bool "Enable OTA firmware updates"
         default n
         help
-            Allow firmware updates over authenticated control and BLE setup.
-            When disabled, OTA commands are not advertised and update requests
-            are skipped without downloading, even when force is requested.
+            Allow firmware updates during BLE setup. When disabled, update
+            requests are skipped without downloading, even when force is
+            requested.
             Optional OTA parameters in Wi-Fi setup are ignored so provisioning
-            can finish normally. Internal builds enable this explicitly.
+            can finish normally. Builds that ship updates enable this
+            explicitly.
 
     config HOMEHUB_SUPPORT_BUG_REPORT
         bool "Enable private support bug reporting"
         default n
         help
             Accept the private bug.report command over authenticated remote
-            control. Do not advertise it in generic node.register commands.
+            control. Do not advertise it in generic link.register commands.
             The report can contain restricted support PII from the bounded
             current-boot application log, but never credentials,
             keys, signed URL queries, or arbitrary response bodies.
@@ -115,11 +168,30 @@ menu "ESP32 Device SDK"
             profiles enable this explicitly; the Kconfig fallback remains off
             for custom builds that bypass the supported sdkconfig defaults.
 
+    config HOMEHUB_ERROR_REPORT
+        bool "Report abnormal resets to the VM automatically"
+        default n
+        # The fault is recorded by code in flash, which the stock panic handler
+        # makes reachable first; the IRAM handler can run with the cache off.
+        depends on !ESP_PANIC_HANDLER_IRAM
+        help
+            After a panic, watchdog, brownout, power-glitch, CPU-lockup or
+            eFuse reset, send one small link.error_report message once the
+            device has registered with its VM: the reset reason, the firmware
+            version that was running, how many abnormal resets happened in a
+            row and, for a panic once the firmware is up, the uptime, fault
+            address and cause. It carries no logs, network names, addresses or
+            device identifiers. The record lives in retained RAM, where an
+            unsent report waits across restarts (a factory reset drops it);
+            nothing is written to flash. Supported profiles
+            enable this explicitly; the Kconfig fallback remains off for
+            custom builds that bypass the supported sdkconfig defaults.
+
     config HOMEHUB_SHOW_AGENT_NAME
         bool "Show the agent's name on the display"
         default y if HOMEHUB_DISPLAY || HOMEHUB_LED_BACKEND_C3_SSD1306
         help
-            After the device registers, fetch GET /identity over the Noise
+            After the device registers, fetch GET /api/gadget/me over the Noise
             session and show the agent's name on the status display. Only
             display backends (and the C3's text OLED) can show it, so it is
             off for LED-only builds.
@@ -128,23 +200,48 @@ menu "ESP32 Device SDK"
         bool "Enable the home-network tunnel and network discovery"
         default y
         help
-            Open the /link-tunnel data-plane stream on the Noise session, bring
+            Open the /api/gadget/tunnel data-plane stream on the Noise session, bring
             up the NAPT tunnel netif, and accept device.discover. Together they
             need roughly 60 KB of internal RAM beyond the control session, plus
             up to 256 KB for discovery results, so boards without PSRAM (e.g.
             the classic ESP32) should disable this. The control API to the VM
             keeps working; the status turns green once the control session is up.
 
+    config HOMEHUB_TUNNEL_UDP_IDLE_S
+        int "Seconds an idle UDP flow keeps its NAPT mapping"
+        depends on HOMEHUB_TUNNEL
+        range 120 3600
+        default 120
+        help
+            How long lwIP's NAPT keeps a UDP mapping from the VM to the LAN
+            after its last datagram. lwIP's own default is 2 s, too short for
+            replies that come a few seconds later and for protocols that keep
+            a flow quiet between polls. Each mapping takes one of NAPT's 512
+            entries until it expires; when they're all taken, a new mapping
+            replaces the least recently used one, TCP included. Applied on
+            ESP-IDF v6.0.x with the NAPT input check, where it was checked;
+            otherwise the build warns and NAPT keeps 2 s.
+
+    config HOMEHUB_NET_FORWARD
+        bool "Let the VM open LAN ports to itself (net.forward)"
+        depends on HOMEHUB_TUNNEL
+        default y
+        help
+            Accept net.forward: the VM opens one of this device's LAN ports
+            (UDP or TCP, 1 to 49151) to itself for up to an hour per call, so
+            devices on the home network can connect to it. With this off, the
+            tunnel carries only connections the VM opens.
+
     config HOMEHUB_SETUP_TASKS_IN_PSRAM
         bool "Put the setup tasks' stacks in PSRAM"
         depends on SPIRAM && SPIRAM_FETCH_INSTRUCTIONS && SPIRAM_RODATA
         default n
         help
-            Starts the pairing timers, the Wi-Fi scan refresh and the
-            provisioning task (main/helper_task.h) with their stacks in PSRAM,
-            sparing about 16 KB of internal RAM while setup runs. For a board
-            whose overlay is short of internal RAM. It needs code and read-only
-            data in PSRAM: flash writes then leave the cache on, and
+            Starts the Wi-Fi scan refresh, the provisioning task and a
+            pairing timeout's task (main/helper_task.h) with their stacks in
+            PSRAM, sparing about 12 KB of internal RAM while setup runs. For a
+            board whose overlay is short of internal RAM. It needs code and
+            read-only data in PSRAM: flash writes then leave the cache on, and
             provisioning writes NVS, which asserts on a PSRAM stack otherwise.
 
     config HOMEHUB_BLE_PERSISTENT
@@ -190,7 +287,7 @@ menu "ESP32 Device SDK"
             a time. Measured on the C5 DevKitC-1 with BLE advertising, tunnel
             throughput rose from about 2.1 to 4.1 Mbit/s each way, and a
             connected central's reads kept working. Scanning still takes its
-            share. Main/ble_coex.h describes it; validated on the C5 only.
+            share. See main/ble_coex.h; validated on the C5 only.
 
     config HOMEHUB_BLE_COEX_WIFI_FIRST_CONNECTED
         bool "Also while a BLE peer is connected"
@@ -224,6 +321,25 @@ menu "ESP32 Device SDK"
             throughput beside Wi-Fi: writes without response are counted
             and dropped, and writing a 4-byte little-endian count to it makes
             the device notify that many bytes back. Bench builds only.
+
+    config HOMEHUB_DMA_RESERVE_KB
+        int "Internal RAM kept for DMA and internal-only allocations (KB)"
+        depends on SPIRAM_USE_MALLOC && !IDF_TARGET_ESP32
+        range 0 128
+        default 64
+        help
+            Set aside before app_main as a heap of its own (main/main.c).
+            malloc() never takes from it and falls back to other internal RAM
+            and PSRAM instead: only requests that name their caps (DMA,
+            internal, 8-bit or 32-bit) do, such as AES DMA buffers and task
+            stacks. This replaces ESP-IDF's
+            CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL, which must stay 0: from
+            ESP-IDF v6.0.3 that pool also serves malloc(), and
+            heap_caps_get_minimum_free_size() counts it as empty from boot.
+            The classic ESP32 keeps ESP-IDF's reserve instead
+            (sdkconfig.defaults.esp32): its startup stacks hold the top
+            128 KB of internal RAM until main_task starts, after this
+            reserve is taken.
 
     config HOMEHUB_FAST_GCM
         bool "Faster AES-GCM GHASH (chips without a GCM engine)"
@@ -339,7 +455,8 @@ menu "ESP32 Device SDK"
             request gets a stream of its own; a refused or reset one
             doesn't touch Link's control stream. Muse's own boards, and
             boards with display.draw_file, always have it. Costs a few KB
-            of flash and a small queue in RAM.
+            of flash and a small queue in RAM, and on boards with PSRAM
+            104 KB of it for the session's larger inbound buffers.
 
     config HOMEHUB_DEV_BUILD
         bool "Dev build (dev signing key + dev-only affordances)"
@@ -355,6 +472,16 @@ menu "ESP32 Device SDK"
             authorization headers, signed URL query parameters, private keys,
             or arbitrary response bodies.
 
+    config MUSE_GADGET_NODE_ID_PREFIX
+        bool "New setups offer gadget- node ids"
+        default n
+        help
+            On, a new setup offers node_id "gadget-XXXXXX" instead of
+            "homelink-XXXXXX". Off by default; turn it on for development
+            (bench builds, devices/sdkconfig.muse-bench, do). Either way
+            setup stores the id with the device tokens, and a device keeps
+            its stored id until it is set up again.
+
     config HOMEHUB_BLE_NAME_PREFIX
         string "Visible BLE name prefix"
         default "MuseGadget"
@@ -362,7 +489,9 @@ menu "ESP32 Device SDK"
             The device advertises as "<prefix><suffix>-XXXXXX", where XXXXXX
             is the last three Wi-Fi STA MAC octets. Keep prefix and suffix
             together at most 22 characters so the name fits the BLE scan
-            response. The backend node_id ("homelink-XXXXXX") does not change.
+            response. The backend node_id ("gadget-XXXXXX" with
+            MUSE_GADGET_NODE_ID_PREFIX, else "homelink-XXXXXX"; a set-up
+            device keeps its stored one) does not change.
 
     config HOMEHUB_BLE_NAME_SUFFIX
         string "Visible BLE name suffix"
@@ -370,8 +499,7 @@ menu "ESP32 Device SDK"
         help
             Appended to HOMEHUB_BLE_NAME_PREFIX. Bench boards set one, such as
             "-Disp", so they are easy to tell apart while keeping the build's
-            prefix: MuseGadget-Disp in the open-source build, HomeLink-Disp in
-            the internal one.
+            prefix: MuseGadget-Disp with the default prefix.
 
     config HOMEHUB_BUTTON_GPIO
         int "Active-low setup/reset button GPIO"
@@ -407,12 +535,13 @@ menu "ESP32 Device SDK"
             along the top and bottom edges, with an animation in between. The
             Home Assistant Voice PE shows the status colour on its LED ring.
             Seeed reSpeaker Lite shows it on a single RGB LED.
-            The reTerminal E1001 and E1002 show a still status screen on
-            their e-paper instead (black and white on the E1001, six colours
-            on the E1002).
+            The reTerminal E1001, E1002 and E1003 show a still status screen on
+            their e-paper instead (black and white on the E1001 and E1003,
+            six colours on the E1002).
             The Waveshare ESP32-S3-ePaper-1.54G does the same in four colours.
             The ESP32-C3 with a 0.42 inch OLED shows the status and the
-            agent's name as text.
+            agent's name as text. The M5Stack CoreMatrix shows it as a
+            picture on its 16x16 white LED matrix.
             Boards with the full UI have no status LED; their screen shows Link's pairing
             and connection state instead.
 
@@ -436,12 +565,20 @@ menu "ESP32 Device SDK"
             bool "SenseCAP Indicator 4 inch ST7701S RGB display (status bars)"
             depends on IDF_TARGET_ESP32S3 && SPIRAM
 
+        config HOMEHUB_LED_BACKEND_WAVESHARE_S3_ST7796
+            bool "Waveshare ESP32-S3-Touch-LCD-3.5 ST7796 display (status bars)"
+            depends on IDF_TARGET_ESP32S3 && SPIRAM
+
         config HOMEHUB_LED_BACKEND_RETERMINAL_UC8179
             bool "reTerminal E1001 7.5 inch UC8179 e-paper (status screen)"
             depends on IDF_TARGET_ESP32S3 && SPIRAM
 
         config HOMEHUB_LED_BACKEND_RETERMINAL_SPECTRA6
             bool "reTerminal E1002 7.3 inch Spectra 6 colour e-paper (status screen)"
+            depends on IDF_TARGET_ESP32S3 && SPIRAM
+
+        config HOMEHUB_LED_BACKEND_RETERMINAL_IT8951
+            bool "reTerminal E1003 10.3 inch IT8951 e-paper (status screen)"
             depends on IDF_TARGET_ESP32S3 && SPIRAM
 
         config HOMEHUB_LED_BACKEND_STICKY_SSD1677
@@ -467,6 +604,11 @@ menu "ESP32 Device SDK"
         config HOMEHUB_LED_BACKEND_MUSE
             bool "Muse display"
             depends on MUSE_ENABLED
+
+        config HOMEHUB_LED_BACKEND_M5_COREMATRIX
+            bool "M5Stack CoreMatrix (16x16 white LED matrix status)"
+            depends on IDF_TARGET_ESP32C61
+            select HOMEHUB_LED_MATRIX
 
         config HOMEHUB_LED_BACKEND_C3_SSD1306
             bool "ESP32-C3 0.42 inch SSD1306 OLED (72x40 text status)"
@@ -513,8 +655,10 @@ menu "ESP32 Device SDK"
         default y if HOMEHUB_LED_BACKEND_WAVESHARE_C6_ST7789
         default y if HOMEHUB_LED_BACKEND_CYD_ILI9341
         default y if HOMEHUB_LED_BACKEND_SENSECAP_ST7701
+        default y if HOMEHUB_LED_BACKEND_WAVESHARE_S3_ST7796
         default y if HOMEHUB_LED_BACKEND_RETERMINAL_UC8179
         default y if HOMEHUB_LED_BACKEND_RETERMINAL_SPECTRA6
+        default y if HOMEHUB_LED_BACKEND_RETERMINAL_IT8951
         default y if HOMEHUB_LED_BACKEND_STICKY_SSD1677
         default y if HOMEHUB_LED_BACKEND_WAVESHARE_SSD1681
         default y if HOMEHUB_LED_BACKEND_WAVESHARE_EPD154G
@@ -525,18 +669,51 @@ menu "ESP32 Device SDK"
 
     config HOMEHUB_VOICE
         bool "Push-to-talk voice chat"
-        depends on (HOMEHUB_LED_BACKEND_VOICE_RING || HOMEHUB_LED_BACKEND_RESPEAKER_LITE) && SPIRAM
-        default y
+        depends on SPIRAM
+        default y if HOMEHUB_LED_BACKEND_VOICE_RING
+        default y if HOMEHUB_LED_BACKEND_RESPEAKER_LITE
         help
-            Hold the centre button (XIAO BOOT on reSpeaker Lite), speak,
-            release: the audio goes to the agent's chat as a voice note,
-            which the VM transcribes, and the
-            reply appears in the Muse app as text. To speak it, plug a TTS
-            API of your own into start_tts in muse_chat_session.cpp. This
-            uses a second Noise session (Muse's voice session) with Link's
-            account. While the mute
-            switch is on, the button keeps its setup role (tap to confirm
-            pairing, hold to reset).
+            Hold the centre button (XIAO BOOT on Seeed reSpeaker boards, BOOT
+            on the Waveshare ESP32-S3-ePaper-1.54G), speak, then release to
+            send a voice note. The reply appears in the Muse app as text
+            unless a separate TTS integration is configured. Voice PE and
+            reSpeaker Lite retain their automatic enablement for existing
+            configurations. Other boards must enable this option and select
+            their exact audio board explicitly.
+
+    choice HOMEHUB_VOICE_BOARD
+        prompt "Voice audio board"
+        depends on HOMEHUB_VOICE
+        default HOMEHUB_VOICE_BOARD_VOICE_PE if HOMEHUB_LED_BACKEND_VOICE_RING
+        default HOMEHUB_VOICE_BOARD_RESPEAKER_LITE if HOMEHUB_LED_BACKEND_RESPEAKER_LITE
+        default HOMEHUB_VOICE_BOARD_UNSPECIFIED
+        help
+            Select the exact voice hardware. The Voice PE and reSpeaker Lite
+            LED-derived defaults preserve existing configurations. Every
+            other voice product must select its board explicitly. The build
+            rejects an unspecified board, multiple drivers, and unsupported
+            audio-board/status-backend combinations.
+
+        config HOMEHUB_VOICE_BOARD_UNSPECIFIED
+            bool "No voice board selected"
+
+        config HOMEHUB_VOICE_BOARD_VOICE_PE
+            bool "Home Assistant Voice Preview Edition"
+            depends on IDF_TARGET_ESP32S3
+
+        config HOMEHUB_VOICE_BOARD_RESPEAKER_LITE
+            bool "Seeed reSpeaker Lite with XIAO ESP32-S3"
+            depends on IDF_TARGET_ESP32S3
+
+        config HOMEHUB_VOICE_BOARD_RESPEAKER_XVF3800
+            bool "Seeed reSpeaker XVF3800 with XIAO ESP32-S3 (experimental)"
+            depends on IDF_TARGET_ESP32S3
+
+        config HOMEHUB_VOICE_BOARD_WAVESHARE_154G
+            bool "Waveshare ESP32-S3-ePaper-1.54G"
+            depends on IDF_TARGET_ESP32S3
+
+    endchoice
 
     config HOMEHUB_SENSECAP_SENSORS
         bool "SenseCAP Indicator air sensors (sensors.read)"
@@ -586,15 +763,23 @@ menu "ESP32 Device SDK"
             tenths of a degree Celsius. Waveshare's own SHTC3 example for this
             board subtracts 4 C, hence -40.
 
+    config HOMEHUB_LED_MATRIX
+        bool
+        help
+            The status and images on a 16x16 one-bit LED matrix
+            (main/matrix_status.c), which the board supplies as an esp_lcd
+            panel. Selected by the boards that have one.
+
     config HOMEHUB_DISPLAY_COMMANDS
         bool
         default y if HOMEHUB_DISPLAY
+        default y if HOMEHUB_LED_MATRIX
         default y if HOMEHUB_LED_BACKEND_MUSE && SPIRAM && (ESP_ROM_HAS_JPEG_DECODE || SOC_JPEG_DECODE_SUPPORTED)
         select HOMEHUB_DAEMON_REQUESTS   # display.draw_file reads from the VM
         help
             Set when display.draw_url and display.draw_file can draw an
-            image: the display backends, and boards with the full UI, PSRAM
-            for the image and a JPEG decoder in ROM or hardware.
+            image: the display backends, the LED matrix, and boards with the
+            full UI, PSRAM for the image and a JPEG decoder in ROM or hardware.
 
     config HOMEHUB_PRE_DVT_GPIO
         bool "Use pre-DVT GPIO assignments"

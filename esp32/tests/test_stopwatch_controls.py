@@ -174,6 +174,7 @@ static void *lv_tileview_get_tile_active(void *tv) { (void)tv; return settings ?
 static void lv_obj_set_flag(void *obj, int flag, bool value) { (void)flag; ((typeof(hints[0]) *)obj)->hidden = value; ++lv_calls; }
 static const char *lv_label_get_text(void *obj) { return ((typeof(hints[0]) *)obj)->text; }
 static void lv_label_set_text(void *obj, const char *text) { strcpy(((typeof(hints[0]) *)obj)->text, text); }
+#define muse_theme_set_style_text_color lv_obj_set_style_text_color
 static void lv_obj_set_style_text_color(void *obj, int color, int part) { (void)obj; (void)color; (void)part; }
 static int lv_color_hex(int color) { return color; }
 static bool muse_settings_speaker_on(void) { return speaker; }
@@ -309,13 +310,16 @@ int main(int argc, char **argv) {
 #include <stdio.h>
 #include <string.h>
 typedef void lv_obj_t;
+#define T(en) (en)
 #define LV_SYMBOL_POWER "P"
+#define LV_SYMBOL_REFRESH "R"
 #define COLOR_DANGER 1
 #define COLOR_TEXT 2
 static lv_obj_t *s_power;
 static char shown[128];
 static struct { const char *power_button, *talk_button, *aux_button; } board = {"red bottom-left", "top-right", NULL}, *muse_board = &board;
 static void on_power_off(void *p) { (void)p; }
+static void on_restart(void *p) { (void)p; }
 static void on_back(void *p) { (void)p; }
 static void *page(void *tile, const char *title, bool back, void **list) { (void)tile; (void)title; (void)back; *list = (void *)1; return *list; }
 static void note(void *list, const char *text) { (void)list; strcpy(shown, text); }

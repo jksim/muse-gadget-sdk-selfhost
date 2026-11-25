@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Builds LIB_DIR/libmgx264.a (the software H.264 encoder, X264.swift): libx264
+# Builds LIB_DIR/libmgx264.a (the software H.264 encoder, X264 in Encoders.swift): libx264
 # from your checkout (X264_SRC, https://code.videolan.org/videolan/x264) with
 # android/musegadgetstest/jni/x264_mvcheap.py's mv-cheap (unless MV_CHEAP=0), for
 # iPhone (arm64, NEON), and native/mgx264.c, in one static library.
@@ -23,7 +23,15 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 : "${X264_SRC:?set X264_SRC to an x264 checkout}"
 out=${LIB_DIR:-$here/../lib}
-work=${WORK:-/tmp/mgx264-ios}
+# A private scratch directory, removed on exit. WORK names one to use and
+# keep instead.
+if [ -n "${WORK:-}" ]; then
+    work=$WORK
+else
+    work=$(mktemp -d "${TMPDIR:-/tmp}/mgx264-ios.XXXXXX")
+    trap 'rm -rf -- "$work"' EXIT
+    trap 'exit 1' HUP INT TERM
+fi
 rm -rf "$work/src" "$work/x264" && mkdir -p "$work" "$out"
 cp -R "$X264_SRC" "$work/src"
 if [ "${MV_CHEAP:-1}" != 0 ]; then

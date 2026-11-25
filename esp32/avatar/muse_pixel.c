@@ -97,6 +97,8 @@ static const uint32_t FIXED[C_COUNT] = {
 
 static rgb_t s_scheme[5];      /* live, blended: f0..f3, acc */
 static bool s_scheme_init;
+static uint32_t s_background;
+void muse_pixel_set_background(uint32_t rgb) {s_background=rgb&0xffffff;}
 static uint16_t s_pal[C_COUNT];
 static uint16_t s_pal_dim[C_COUNT];
 
@@ -212,6 +214,7 @@ static void update_palette(const scheme_t *target, float dt)
     for (int i = 0; i < C_COUNT; i++) {
         pal[i] = hex_rgb(FIXED[i]);
     }
+    pal[C_BG] = hex_rgb(s_background);
     rgb_t acc = s_scheme[4];
     pal[C_G0] = s_scheme[0];
     pal[C_G1] = s_scheme[1];
@@ -219,14 +222,14 @@ static void update_palette(const scheme_t *target, float dt)
     pal[C_G3] = s_scheme[3];
     pal[C_ACC] = acc;
     pal[C_RIM] = mix(pal[C_BL], acc, 0.45f);
-    pal[C_AURA1] = scale_rgb(acc, 0.16f);
-    pal[C_AURA2] = scale_rgb(acc, 0.34f);
+    pal[C_AURA1] = mix(pal[C_BG], acc, 0.16f);
+    pal[C_AURA2] = mix(pal[C_BG], acc, 0.34f);
     pal[C_SPK] = mix(acc, pal[C_WHITE], 0.45f);
 
     for (int i = 0; i < C_COUNT; i++) {
         s_pal[i] = to565(pal[i]);
         /* The block edge shade gives the enlarged pixels a faint grid texture. */
-        s_pal_dim[i] = to565(scale_rgb(pal[i], 0.72f));
+        s_pal_dim[i] = i == C_BG ? s_pal[i] : to565(scale_rgb(pal[i], 0.72f));
     }
 }
 
@@ -340,7 +343,7 @@ static float eyes_update(const muse_pose_t *p, float dt)
         tgy = -0.85f;
         break;
     case MUSE_MODE_SPEAKING:
-        tgx *= 0.3f;
+        tgx *= 0.55f;
         tgy = 0;
         break;
     default:
@@ -727,7 +730,7 @@ static void draw_mouth(int x, int y, mouth_t m, float open)
         break;
     }
     case MOUTH_TALK: {
-        int h = 1 + iround(clampf(open, 0, 1) * 4.0f);
+        int h = 1 + iround(clampf(open, 0, .45f) * 4.0f);
         int w = h > 2 ? 5 : 4;
         for (int j = 0; j < h; j++) {
             int inset = (j == 0 || j == h - 1) && h > 2 ? 1 : 0;
@@ -1121,9 +1124,16 @@ void muse_pixel_render(const muse_pose_t *p)
     case MUSE_MODE_SPEAKING:
         mouth = MOUTH_TALK;
         /* Real audio drives articulation; caption-only replies have a visual
-         * speaking rhythm so their mouth no longer stays fixed shut. */
-        mouth_open = speech.mouth;
-        if (mouth_open > .16f && mouth_open < .55f &&
+         * speaking rhythm so their mouth no longer stays fixed shut. This
+         * avatar keeps the mouth small: muse_speaking.h's 0..1 range is
+         * shared with custom avatars, so the scaling stays here. */
+        mouth_open = clampf(speech.mouth * (speech.heard_voice ? 2.0f / 3.0f : .5f), 0, .45f);
+        if (speech.heard_voice && speech.quiet > .52f) {
+            /* A small closed-eye smile softens a genuine pause in speech. */
+            style = EYES_HAPPY;
+            mouth = MOUTH_GRIN;
+            mouth_open = 0;
+        } else if (mouth_open > .16f &&
             (!speech.heard_voice || level < speech.energy * .8f)) mouth = MOUTH_O;
         if (speech.eye_wide > .4f) style = EYES_WIDE;
         break;

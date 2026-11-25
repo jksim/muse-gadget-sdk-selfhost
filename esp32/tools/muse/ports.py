@@ -46,26 +46,35 @@ def _usbs(usb):
 
 # board.sh's name -> the USB device carrying its console.
 USB = {
+    "k10": USJ,
     "s3": USJ,
     "s3n": USJ,
     "s3-18": USJ,
     "s3-216": USJ,
     "s3-206": USJ,
+    "185b": USJ,
     "185c": USJ,
     "143c": USJ,
     "143": USJ,
+    "lilygo175": USJ,
     "146": USJ,
     "aipi": USJ,
     "atk-box": USJ,
+    "atk-box2": USJ,
     "box3": USJ,
     "echoear": USJ,
     "c6": USJ,
     "c6-206": USJ,
     "sticks3": USJ,
     "cardputer-adv": USJ,
+    # Stock AtomS3 UiFlow firmware enumerates as 303a:8120; ESP-IDF firmware
+    # uses the chip's USB Serial/JTAG interface (303a:1001).
+    "atoms3": (USJ, (0x303A, 0x8120)),
     "stopwatch": USJ,
+    "triviapod": USJ,
     "xiao147": USJ,
     "cores3": USJ,
+    "cores3lite": USJ,
     "crowpanel-43": CH340,
     "fnk0104b": USJ,
     "jc3248w535": USJ,
@@ -79,18 +88,19 @@ USB = {
     "rorolee": USJ,
     "smartring-plus": USJ,
     "lcd19": USJ,
+    "s3lcd35": USJ,
     "watcher": CH342,   # the ESP32-S3 on the second port; the Himax camera chip is on the first
     "plus2": CH9102,
     "core2": (CP210X, CH9102),
 }
 # Boards whose console takes Muse's serial commands (tools/muse/chat.py). The
 # Watcher reads them on its CH342 port with MUSE_CONSOLE_UART.
-COMMANDS = ("s3", "s3n", "s3-18", "s3-216", "s3-206", "185c", "143c", "143", "146", "aipi", "atk-box", "box3", "c6", "c6-206", "sticks3", "watcher", "plus2", "cardputer-adv", "stopwatch", "xiao147", "cores3", "crowpanel-43", "core2", "fnk0104b", "jc3248w535", "lcd7", "lcd128", "lcd349", "spotpear", "vn183", "ai-passport", "echoear", "p4lcd35", "rorolee", "lcd19", "smartring-plus")
+COMMANDS = ("k10", "s3", "s3n", "s3-18", "s3-216", "s3-206", "185b", "185c", "143c", "143", "146", "lilygo175", "aipi", "atk-box", "atk-box2", "box3", "c6", "c6-206", "sticks3", "watcher", "plus2", "cardputer-adv", "atoms3", "stopwatch", "triviapod", "xiao147", "cores3", "cores3lite", "crowpanel-43", "core2", "fnk0104b", "jc3248w535", "lcd7", "lcd128", "lcd349", "spotpear", "vn183", "ai-passport", "echoear", "p4lcd35", "rorolee", "lcd19", "smartring-plus", "s3lcd35")
 # Bridges that drop bytes when a whole packet arrives at once, so writes to them
 # go 64 bytes at a time at the line rate (paced_esptool.py, chat.Board.write).
 PACED = (CH342,)
 KINDS = {USJ: "Espressif USB Serial/JTAG", CH342: "CH342 bridge", CH9102: "CH9102 bridge", CH343: "CH343 bridge",
-         CH340: "CH340 bridge", CP210X: "CP2104 bridge"}
+         CH340: "CH340 bridge", CP210X: "CP2104 bridge", (0x303A, 0x8120): "AtomS3 USB CDC"}
 
 
 class NotFound(Exception):
@@ -138,7 +148,9 @@ def paced(port, ports=None):
 
 def command_ports(ports=None):
     """Ports of boards that take serial commands, USB Serial/JTAG first."""
-    kinds = dict.fromkeys(USB[b] for b in COMMANDS)
+    # One entry per USB device kind, so a kind that several boards share (or
+    # that a board lists beside another) yields each port once.
+    kinds = dict.fromkeys(u for b in COMMANDS for u in _usbs(USB[b]))
     return [p.device for usb in kinds for p in devices(usb, ports)]
 
 

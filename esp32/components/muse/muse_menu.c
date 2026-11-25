@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "muse_theme_lvgl.h"
 #include "muse_menu.h"
 
 #include <stdio.h>
@@ -36,9 +37,13 @@
 #include "muse_state.h"
 #include "muse_text.h"
 #include "muse_voice.h"
+#include "muse_wakeword_glue.h"
 #include "muse_wifi.h"
 #if CONFIG_MUSE_VIDEO
 #include "muse_video.h"
+#endif
+#if CONFIG_MUSE_APP_VIEW
+#include "muse_app_view.h"
 #endif
 
 static const char *TAG = "muse_menu";
@@ -70,6 +75,9 @@ typedef enum {
     ITEM_SPEAKER,
     ITEM_BRIGHTNESS,
     ITEM_MIC,
+#if CONFIG_MUSE_WAKEWORD_ENABLE
+    ITEM_WAKE,
+#endif
     ITEM_SLEEP,
 #if CONFIG_MUSE_SMALL_FULL_REPLY
     ITEM_TEXT,
@@ -78,6 +86,10 @@ typedef enum {
     ITEM_WIFI,
 #if CONFIG_MUSE_VIDEO
     ITEM_CAMERA,
+#endif
+#if CONFIG_MUSE_APP_VIEW
+    ITEM_APPS_ON,
+    ITEM_APPS,
 #endif
     ITEM_INFO,
     ITEM_BATTERY,
@@ -93,6 +105,9 @@ static const char *const ITEM_NAMES[ITEM_COUNT] = {
     [ITEM_SPEAKER] = "Speaker",
     [ITEM_BRIGHTNESS] = "Brightness",
     [ITEM_MIC] = "Mic gain",
+#if CONFIG_MUSE_WAKEWORD_ENABLE
+    [ITEM_WAKE] = "Wake word",
+#endif
     [ITEM_SLEEP] = "Auto-sleep",
 #if CONFIG_MUSE_SMALL_FULL_REPLY
     [ITEM_TEXT] = "Text size",
@@ -101,6 +116,10 @@ static const char *const ITEM_NAMES[ITEM_COUNT] = {
     [ITEM_WIFI] = "Wi-Fi",
 #if CONFIG_MUSE_VIDEO
     [ITEM_CAMERA] = "Phone camera",
+#endif
+#if CONFIG_MUSE_APP_VIEW
+    [ITEM_APPS_ON] = "Run apps",
+    [ITEM_APPS] = "Apps",
 #endif
     [ITEM_INFO] = "Status",
     [ITEM_BATTERY] = "Battery",
@@ -116,6 +135,9 @@ static const char *const ITEM_ACTIONS[ITEM_COUNT] = {
     [ITEM_SPEAKER] = "Toggle",
     [ITEM_BRIGHTNESS] = "Change",
     [ITEM_MIC] = "Change",
+#if CONFIG_MUSE_WAKEWORD_ENABLE
+    [ITEM_WAKE] = "Toggle",
+#endif
     [ITEM_SLEEP] = "Change",
 #if CONFIG_MUSE_SMALL_FULL_REPLY
     [ITEM_TEXT] = "Change",
@@ -124,6 +146,10 @@ static const char *const ITEM_ACTIONS[ITEM_COUNT] = {
     [ITEM_WIFI] = "Toggle",
 #if CONFIG_MUSE_VIDEO
     [ITEM_CAMERA] = "Open",
+#endif
+#if CONFIG_MUSE_APP_VIEW
+    [ITEM_APPS_ON] = "Toggle",
+    [ITEM_APPS] = "Open",
 #endif
     [ITEM_INFO] = "Open",
     [ITEM_BATTERY] = "Open",
@@ -140,7 +166,7 @@ static const int GAIN_STEPS[] = { 0, 6, 12, 18, 24, 30, 36 };
 static const int SLEEP_STEPS[] = { 0, 30, 60, 120, 300, 600 };
 static const char *const SLEEP_NAMES[] = { "Never", "30 s", "1 min", "2 min", "5 min", "10 min" };
 #if CONFIG_MUSE_SMALL_FULL_REPLY
-static const char *const TEXT_NAMES[] = { "Small", "Medium", "Large" };
+static const char *const TEXT_NAMES[MUSE_TEXT_SIZES] = { "Extra small", "Small", "Medium", "Large", "Extra large" };
 #endif
 #define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
@@ -182,7 +208,7 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, 
     text = muse_lang_menu(text);
     lv_obj_t *l = lv_label_create(parent);
     lv_obj_set_style_text_font(l, font == s_fine ? muse_lang_label_font(text, font) : font, 0);
-    lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
+    muse_theme_set_style_text_color(l, lv_color_hex(color), 0);
     lv_label_set_text(l, text);
     return l;
 }
@@ -281,6 +307,11 @@ static void value_text(int item, char *buf, size_t n)
     case ITEM_MIC:
         snprintf(buf, n, "%d dB", muse_settings_mic_gain());
         break;
+#if CONFIG_MUSE_WAKEWORD_ENABLE
+    case ITEM_WAKE:
+        strlcpy(buf, muse_wakeword_enabled() ? "On" : "Off", n);
+        break;
+#endif
     case ITEM_SLEEP:
         strlcpy(buf, sleep_name(muse_settings_sleep_s()), n);
         break;
@@ -299,6 +330,11 @@ static void value_text(int item, char *buf, size_t n)
 #if CONFIG_MUSE_VIDEO
     case ITEM_CAMERA:
         strlcpy(buf, muse_video_has_client() ? "Ready" : "No phone", n);
+        break;
+#endif
+#if CONFIG_MUSE_APP_VIEW
+    case ITEM_APPS_ON:
+        strlcpy(buf, muse_settings_apps_on() ? "On" : "Off", n);
         break;
 #endif
     case ITEM_BATTERY:
@@ -336,7 +372,7 @@ static void status_text(char *buf, size_t n)
              w.state == MUSE_WIFI_CONNECTED ? w.ip : "-", muse_lang_menu(muse_link_state_name(muse_link_state())),
              muse_lang_menu(muse_hatch_state_name(h.state)), phone, batt,
              esp_app_get_description()->version);
-    muse_text_to_caption(buf, n);   /* network and phone names can have curly quotes */
+    muse_text_to_label(buf, n);   /* network and phone names can have curly quotes */
 }
 
 static void pm_text(char out[24], int pm)
@@ -426,7 +462,7 @@ static void show(view_t view)
     lv_obj_set_flag(s_page_box, LV_OBJ_FLAG_HIDDEN, view == VIEW_LIST);
     lv_obj_scroll_to_y(s_page_box, 0, LV_ANIM_OFF);
     bool danger = view == VIEW_POWER || view == VIEW_RESET;
-    lv_obj_set_style_text_color(s_hint_select, lv_color_hex(danger ? COLOR_DANGER : COLOR_TEXT), 0);
+    muse_theme_set_style_text_color(s_hint_select, lv_color_hex(danger ? COLOR_DANGER : COLOR_TEXT), 0);
 
     switch (view) {
     case VIEW_STATUS:
@@ -490,6 +526,11 @@ static void activate(int item, int direction)
     case ITEM_MIC:
         muse_settings_set_mic_gain(value_step(GAIN_STEPS, COUNT(GAIN_STEPS), muse_settings_mic_gain(), direction));
         break;
+#if CONFIG_MUSE_WAKEWORD_ENABLE
+    case ITEM_WAKE:
+        muse_wakeword_set_enabled(!muse_wakeword_enabled());
+        break;
+#endif
     case ITEM_SLEEP:
         muse_settings_set_sleep_s(value_step(SLEEP_STEPS, COUNT(SLEEP_STEPS), muse_settings_sleep_s(), direction));
         break;
@@ -508,6 +549,18 @@ static void activate(int item, int direction)
     case ITEM_CAMERA:
         muse_menu_close();
         muse_video_open();
+        return;
+#endif
+#if CONFIG_MUSE_APP_VIEW
+    case ITEM_APPS_ON:   /* restarts the gadget */
+        muse_settings_set_apps_on(!muse_settings_apps_on());
+        break;
+    case ITEM_APPS:   /* the apps' launcher (muse_app_view.h) */
+        if (!muse_settings_apps_on()) {
+            break;
+        }
+        muse_menu_close();
+        muse_app_view_home();
         return;
 #endif
     case ITEM_INFO:
@@ -649,7 +702,7 @@ void muse_menu_build(lv_obj_t *parent, int w, int h)
     s_root = lv_obj_create(parent);
     lv_obj_remove_style_all(s_root);
     lv_obj_set_size(s_root, w, h);
-    lv_obj_set_style_bg_color(s_root, lv_color_black(), 0);
+    muse_theme_set_style_bg_color(s_root, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(s_root, LV_OPA_COVER, 0);
     lv_obj_remove_flag(s_root, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(s_root, LV_OBJ_FLAG_HIDDEN);
@@ -672,7 +725,7 @@ void muse_menu_build(lv_obj_t *parent, int w, int h)
         lv_obj_set_size(r, lv_pct(100), s_row_h);
         lv_obj_set_style_pad_hor(r, small ? 3 : 10, 0);
         lv_obj_set_style_radius(r, small ? 3 : 8, 0);
-        lv_obj_set_style_bg_color(r, lv_color_hex(COLOR_SELECTED), 0);
+        muse_theme_set_style_bg_color(r, lv_color_hex(COLOR_SELECTED), 0);
         lv_obj_remove_flag(r, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
         uint32_t color = i == ITEM_POWER ? COLOR_DANGER : COLOR_TEXT;
         lv_obj_align(label(r, font, color, ITEM_NAMES[i]), LV_ALIGN_LEFT_MID, 0, 0);
@@ -698,7 +751,7 @@ void muse_menu_build(lv_obj_t *parent, int w, int h)
     lv_obj_t *rule = lv_obj_create(s_root);
     lv_obj_remove_style_all(rule);
     lv_obj_set_size(rule, w, 1);
-    lv_obj_set_style_bg_color(rule, lv_color_hex(COLOR_RULE), 0);
+    muse_theme_set_style_bg_color(rule, lv_color_hex(COLOR_RULE), 0);
     lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, 0);
     lv_obj_align(rule, LV_ALIGN_BOTTOM_MID, 0, -hint_h);
     int select = bar_slot(talk);

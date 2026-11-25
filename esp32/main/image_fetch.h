@@ -63,6 +63,12 @@ typedef void (*image_fetch_done_cb)(const image_fetch_result_t *result, void *us
 bool image_fetch_start(const char *url, int row, image_fetch_done_cb done,
                        void *user, const char **code, const char **message);
 
+#if CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_UC8179 || CONFIG_HOMEHUB_LED_BACKEND_RETERMINAL_IT8951
+// Like image_fetch_start, with one full refresh in the selected grayscale mode.
+bool image_fetch_start_gray(const char *url, int row, int levels, image_fetch_done_cb done,
+                            void *user, const char **code, const char **message);
+#endif
+
 // The same for a file on the VM, fetched with GET /fs/raw/<path> over the
 // Noise session rather than from the internet, in Range requests small enough
 // that no reply overflows the session's buffers. Each range is drawn before
@@ -70,6 +76,21 @@ bool image_fetch_start(const char *url, int row, image_fetch_done_cb done,
 // image_fetch_start.
 bool image_fetch_start_vm(const char *path, int row, image_fetch_done_cb done,
                           void *user, const char **code, const char **message);
+
+// For a board that draws on the same screen: image_fetch_claim() takes the
+// one-download slot, so no download starts until image_fetch_release(); false
+// while a download runs. image_fetch_drawn() counts the bands downloads have
+// drawn: a change means an image went up.
+bool image_fetch_claim(void);
+#if CONFIG_MUSE_AVATAR_SYNC
+#if CONFIG_HOMEHUB_DISPLAY_COMMANDS
+bool image_fetch_busy(void);
+#else
+static inline bool image_fetch_busy(void) { return false; }
+#endif
+#endif
+void image_fetch_release(void);
+unsigned image_fetch_drawn(void);
 
 #ifdef __cplusplus
 }

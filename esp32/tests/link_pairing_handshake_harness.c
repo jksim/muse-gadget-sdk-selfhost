@@ -194,7 +194,7 @@ static void accept(bool community) {
     if (!community) verify_official_proof(r);
     assert(s_state == PAIRING_WAIT_CLIENT_FINISHED);
     assert(!link_pairing_session_confirmed() && !link_pairing_confirmation_required());
-    assert(!link_pairing_confirm_active_session());
+    assert(!link_pairing_confirm_active_session(test_now));
     link_pairing_mark_provisioning_active();
     assert(!link_pairing_provisioning_session_valid(0) && s_state == PAIRING_WAIT_CLIENT_FINISHED);
     cJSON_Delete(j); cJSON_Delete(r); free(reply);
@@ -213,9 +213,13 @@ static void finished_confirm_and_replay(void) {
     assert(plain && strcmp(plain,"{\"action\":\"pairing_client_finished\"}")==0); free(plain);
     assert(link_pairing_handle_client_finished());
     assert(link_pairing_confirmation_required() && !link_pairing_session_confirmed());
-    assert(!link_pairing_confirm_active_session()); // The prompt is not emitted yet.
+    assert(!link_pairing_confirm_active_session(test_now)); // The prompt is not emitted yet.
+    test_now += 1000;
     assert(link_pairing_arm_confirmation(link_pairing_session_generation()));
-    assert(link_pairing_confirm_active_session());
+    // A press that began before the prompt was armed doesn't confirm it.
+    assert(!link_pairing_confirm_active_session(test_now - 1));
+    assert(link_pairing_confirmation_required() && !link_pairing_session_confirmed());
+    assert(link_pairing_confirm_active_session(test_now));
     assert(link_pairing_session_confirmed());
     // A duplicate record resets the session instead of accepting nonce reuse.
     assert(strcmp(link_pairing_decrypt_command(j,&plain),"error_pairing_decrypt")==0 && !plain);
@@ -230,13 +234,13 @@ static void stale_confirmation_work_cannot_affect_replacement(void) {
     free(plain); cJSON_Delete(finished);
     uint32_t prompt_generation = link_pairing_handle_client_finished();
     assert(prompt_generation != 0 && link_pairing_session_is_current(prompt_generation));
-    assert(!link_pairing_confirm_active_session()); // Early press before the prompt.
+    assert(!link_pairing_confirm_active_session(test_now)); // Early press before the prompt.
     uint32_t record_generation = 0;
     char *status = link_pairing_encrypt_status("confirm_required", prompt_generation,
                                               &record_generation);
     assert(status); free(status);
     assert(link_pairing_arm_confirmation(prompt_generation));
-    uint32_t old_generation = link_pairing_confirm_active_session();
+    uint32_t old_generation = link_pairing_confirm_active_session(test_now);
     assert(old_generation != 0 && old_generation != prompt_generation);
     assert(!link_pairing_reset_session(prompt_generation));
     assert(!link_pairing_arm_confirmation(prompt_generation));
@@ -298,7 +302,7 @@ static uint32_t begin_provisioning(void) {
     free(plain); cJSON_Delete(finished);
     uint32_t generation = link_pairing_handle_client_finished();
     assert(link_pairing_arm_confirmation(generation));
-    assert(link_pairing_confirm_active_session());
+    assert(link_pairing_confirm_active_session(test_now));
     generation = link_pairing_mark_provisioning_active();
     assert(generation && link_pairing_provisioning_session_valid(generation));
     return generation;
@@ -371,8 +375,22 @@ static void pairing_confirmed_carries_sdk_token(void) {
     reboot(0);
 }
 
+/* What logs may say about a token: none, or its length and a SHA-256 prefix,
+ * never any of its characters (token_fp.h). The Python side checks the hash. */
+#define FAKE_SDK_TOKEN "mgst_FAKEfakeFAKEfake0123456789abcdefghijklmnopq"
+static void token_fingerprints_show_no_characters(void) {
+    char fp[TOKEN_FP_TEXT_LEN];
+    assert(strcmp(token_fp_text(NULL, fp), "none") == 0);
+    assert(strcmp(token_fp_text("", fp), "none") == 0);
+    assert(strcmp(token_fp_text("abc", fp), "3 chars, sha256 ba7816bf") == 0);
+    token_fp_text(FAKE_SDK_TOKEN, fp);
+    assert(strncmp(fp, "48 chars, sha256 ", 17) == 0 && strlen(fp) == 25 && !strstr(fp, "mgst"));
+    printf("FP %s\n", fp);
+}
+
 int main(void) {
     assert(psa_crypto_init()==PSA_SUCCESS);
+    token_fingerprints_show_no_characters();
     reboot(0);
     reject_auth_selection(true);
     cJSON *invalid = hello(5, PAIRING_COMMUNITY_AUTH);
@@ -389,7 +407,7 @@ int main(void) {
     assert(!link_pairing_decrypt_command(j,&plain));free(plain);cJSON_Delete(j);
     assert(link_pairing_handle_client_finished());
     test_now += PAIRING_CONFIRM_TIMEOUT_US+1;
-    assert(!link_pairing_confirm_active_session() && s_state==PAIRING_IDLE);
+    assert(!link_pairing_confirm_active_session(test_now) && s_state==PAIRING_IDLE);
     accept(true);
     test_now += PAIRING_CLIENT_FINISHED_TIMEOUT_US+1;
     assert(!link_pairing_handle_client_finished() && s_state==PAIRING_IDLE);

@@ -22,6 +22,27 @@
     ]
   },
   {
+    "board": "muse-m5stack-atoms3",
+    "name": "M5Stack AtomS3 + Atomic Voice Base (experimental)",
+    "usb": [
+      "303a:1001"
+    ]
+  },
+  {
+    "board": "muse-waveshare-s3-175c",
+    "name": "Waveshare ESP32-S3-Touch-AMOLED-1.75C",
+    "usb": [
+      "303a:1001"
+    ]
+  },
+  {
+    "board": "muse-waveshare-s3-185b",
+    "name": "Waveshare ESP32-S3-Touch-LCD-1.85B",
+    "usb": [
+      "303a:1001"
+    ]
+  },
+  {
     "board": "muse-waveshare-s3-185c",
     "name": "Waveshare ESP32-S3-Touch-LCD-1.85C",
     "usb": [
@@ -63,6 +84,70 @@
     "name": "Seeed Studio reTerminal Sticky (3.97\" e-paper, experimental)",
     "usb": [
       "1a86:55d3"
+    ]
+  },
+  {
+    "board": "muse-aipi",
+    "name": "AIPI Lite",
+    "usb": [
+      "303a:1001"
+    ]
+  },
+  {
+    "board": "muse-m5stack-sticks3",
+    "name": "M5Stack StickS3",
+    "usb": [
+      "303a:1001"
+    ]
+  },
+  {
+    "board": "ideaspark",
+    "name": "ideaspark ESP32 with 1.9\" display",
+    "usb": [
+      "1a86:7523"
+    ]
+  },
+  {
+    "board": "home-assistant-voice",
+    "name": "Home Assistant Voice Preview Edition",
+    "usb": [
+      "303a:1001"
+    ]
+  },
+  {
+    "board": "muse-m5stack-stopwatch",
+    "name": "M5Stack StopWatch",
+    "usb": [
+      "303a:1001"
+    ]
+  },
+  {
+    "board": "muse-m5stack-stickc-plus2",
+    "name": "M5Stack StickC Plus2",
+    "usb": [
+      "1a86:55d4"
+    ]
+  },
+  {
+    "board": "muse-m5stack-core2",
+    "name": "M5Stack Core2 (v1.0)",
+    "usb": [
+      "10c4:ea60",
+      "1a86:55d4"
+    ]
+  },
+  {
+    "board": "muse-waveshare-s3-175",
+    "name": "Waveshare ESP32-S3-Touch-AMOLED-1.75",
+    "usb": [
+      "303a:1001"
+    ]
+  },
+  {
+    "board": "muse-waveshare-s3-216",
+    "name": "Waveshare ESP32-S3-Touch-AMOLED-2.16",
+    "usb": [
+      "303a:1001"
     ]
   }
 ]

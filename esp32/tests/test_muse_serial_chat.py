@@ -18,6 +18,7 @@ the host's (tools/muse/chat.py), and how tools/muse/avatar.py reads Muse's reply
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shlex
@@ -164,6 +165,90 @@ class ReplyTest(unittest.TestCase):
         self.assertFalse(r.intact())
 
 
+class PrinterTest(unittest.TestCase):
+    """What a typed turn shows on screen while its reply streams in."""
+
+    def shows(self, frames) -> str:
+        out = io.StringIO()
+        p = chat.Printer(out)
+        for f in frames:
+            p.feed(f)
+        return out.getvalue()
+
+    def test_one_message_streams_as_it_comes(self) -> None:
+        self.assertEqual(self.shows([
+            {"type": "text", "msg": 0, "text": "Hi "},
+            {"type": "text", "msg": 0, "text": "there"},
+            {"type": "message_done", "msg": 0, "bytes": 8},
+            {"type": "done", "messages": 1, "complete": True},
+        ]), "Hi there\n")
+
+    def test_messages_streaming_together_dont_interleave(self) -> None:
+        self.assertEqual(self.shows([
+            {"type": "text", "msg": 0, "text": "all this time, and to"},
+            {"type": "text", "msg": 1, "text": "Hi Hassan, "},
+            {"type": "text", "msg": 0, "text": " finally catch up"},
+            {"type": "text", "msg": 1, "text": "good to hear from you!"},
+            {"type": "message_done", "msg": 1, "bytes": 33},
+            {"type": "text", "msg": 0, "text": " the way you hoped."},
+            {"type": "message_done", "msg": 0, "bytes": 57},
+            {"type": "done", "messages": 2, "complete": True},
+        ]), "all this time, and to finally catch up the way you hoped.\n"
+            "Hi Hassan, good to hear from you!\n")
+
+    def test_held_message_streams_once_its_turn_comes(self) -> None:
+        self.assertEqual(self.shows([
+            {"type": "text", "msg": 0, "text": "One"},
+            {"type": "text", "msg": 1, "text": "Tw"},
+            {"type": "message_done", "msg": 0, "bytes": 3},
+            {"type": "text", "msg": 1, "text": "o"},
+            {"type": "message_done", "msg": 1, "bytes": 3},
+            {"type": "done", "messages": 2, "complete": True},
+        ]), "One\nTwo\n")
+
+    def test_final_shows_only_what_the_stream_missed(self) -> None:
+        self.assertEqual(self.shows([
+            {"type": "text", "msg": 0, "text": "Hel"},
+            {"type": "final", "msg": 0, "text": "Hello"},
+            {"type": "message_done", "msg": 0, "bytes": 5},
+            {"type": "done", "messages": 1, "complete": True},
+        ]), "Hello\n")
+
+    def test_long_final_comes_in_several_lines(self) -> None:
+        whole = "x" * 300 + "y" * 300
+        finals = [{"type": "final", "msg": 1, "text": whole[i:i + 240]} for i in range(0, len(whole), 240)]
+        self.assertEqual(self.shows([
+            {"type": "text", "msg": 0, "text": "One"},
+            {"type": "text", "msg": 1, "text": "x" * 10},
+            *finals,
+            {"type": "message_done", "msg": 1, "bytes": len(whole)},
+            {"type": "message_done", "msg": 0, "bytes": 3},
+            {"type": "text", "msg": 2, "text": "x" * 10},
+            *[dict(f, msg=2) for f in finals],
+            {"type": "message_done", "msg": 2, "bytes": len(whole)},
+            {"type": "done", "messages": 3, "complete": True},
+        ]), "One\n" + whole + "\n" + whole + "\n")
+
+    def test_failed_turn_still_shows_held_messages(self) -> None:
+        out = io.StringIO()
+        p = chat.Printer(out)
+        for f in ({"type": "text", "msg": 0, "text": "First"},
+                  {"type": "text", "msg": 1, "text": "Second"},
+                  {"type": "error", "text": "CAN'T REACH MUSE"}):
+            p.feed(f)
+        self.assertEqual(out.getvalue(), "First")
+        p.finish()
+        p.finish()
+        self.assertEqual(out.getvalue(), "First\nSecond\n")
+
+    def test_cut_off_reply_still_shows_held_messages(self) -> None:
+        self.assertEqual(self.shows([
+            {"type": "text", "msg": 0, "text": "First"},
+            {"type": "text", "msg": 1, "text": "Second"},
+            {"type": "done", "messages": 2, "complete": False},
+        ]), "First\nSecond\n")
+
+
 class ExtractTest(unittest.TestCase):
     code = (ROOT / "avatar" / "muse_pixel.c").read_text()
 
@@ -235,6 +320,18 @@ class PacingTest(unittest.TestCase):
         with self.assertRaises(chat.ports.NotFound):
             chat.ports.find("core2", ports=[cp2104, ch9102])
 
+    def test_atoms3_finds_stock_or_idf_usb_without_listing_ports_twice(self) -> None:
+        stock = SimpleNamespace(device="/dev/cu.usbmodem2101", vid=0x303A, pid=0x8120,
+                                serial_number="A1")
+        self.assertEqual(chat.ports.find("atoms3", ports=[self.STICKS3]), self.STICKS3.device)
+        self.assertEqual(chat.ports.find("atoms3", ports=[stock]), stock.device)
+        self.assertEqual(chat.ports.command_ports([self.STICKS3]), [self.STICKS3.device])
+        self.assertEqual(chat.ports.command_ports([self.STICKS3, stock]),
+                         [self.STICKS3.device, stock.device])
+        ch9102 = SimpleNamespace(device="/dev/cu.wchusbserial-01", vid=0x1A86, pid=0x55D4,
+                                 serial_number="5413")
+        self.assertEqual(chat.ports.command_ports([ch9102]), [ch9102.device])
+
     def test_lcd7_uses_ch343_for_chat_and_flash(self) -> None:
         lcd7 = SimpleNamespace(device="/dev/cu.usbmodem12345", vid=0x1A86, pid=0x55D3,
                                serial_number="12345")
@@ -265,6 +362,21 @@ class PacingTest(unittest.TestCase):
         b.write_line("status")
         b.wake()
         self.assertEqual(b.ser.writes, [b">status\n"])
+
+
+
+class ConsoleLineTest(unittest.TestCase):
+    def test_a_line_break_cant_start_another_command(self) -> None:
+        # app.py builds commands from file names: "x.png\n>sdk_token=..." mustn't reach the console.
+        board = chat.Board.__new__(chat.Board)
+        sent = []
+        board.write = sent.append
+        board.write_line("files.upload=cat.png")
+        self.assertEqual(sent, [b">files.upload=cat.png\n"])
+        for bad in ("files.upload=x.png\n>sdk_token=mgst_x", "app.put=a\rb"):
+            with self.assertRaises(ValueError):
+                board.write_line(bad)
+        self.assertEqual(len(sent), 1)
 
 
 if __name__ == "__main__":

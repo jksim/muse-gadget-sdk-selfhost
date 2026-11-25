@@ -84,6 +84,46 @@ class LinkBleLifecycleContractTest(unittest.TestCase):
         self.assertIn("LED_STATE_BLE_ADVERTISING", enter_adv)
         self.assertNotIn("setup_window_timeout_task", source)
 
+    def test_lazy_ble_boards_skip_the_paired_boot_start(self) -> None:
+        source = APP_C.read_text()
+        body = _function_body(source, "void app_run(")
+        companion = _function_body(source, "void app_ble_companion_set(bool advertise) {")
+
+        # Boards that can't spare internal RAM at boot leave BLE down once
+        # paired: the 1.75 and 1.75C's idle stack leaves no 8 KB block for
+        # muse_vm (issue 351). The settings switch still brings it up on demand.
+        guard = next(
+            line for line in body.replace("\\\n", " ").splitlines()
+            if line.startswith("#if CONFIG_MUSE_ENABLED && CONFIG_SPIRAM")
+        )
+        # Whole terms: the 1.75's option is a prefix of the 1.75C's.
+        terms = guard.split()
+        self.assertIn("!CONFIG_MUSE_BOARD_CROWPANEL_ADVANCE_43", terms)
+        self.assertIn("!CONFIG_MUSE_BOARD_WAVESHARE_S3_175", terms)
+        self.assertIn("!CONFIG_MUSE_BOARD_WAVESHARE_S3_175C", terms)
+        self.assertIn("if (advertise) start_ble_setup_server_if_needed();", companion)
+
+    def test_forgetting_phones_works_before_ble_starts(self) -> None:
+        # On the lazy-BLE boards the stack may still be down when Settings'
+        # "Forget paired phones" runs. ble_store_clear() can't reach the bonds
+        # then, and NimBLE would load them again on start: clear its NVS store.
+        source = (ROOT / "components" / "muse" / "muse_ble.c").read_text()
+        forget = _function_body(source, "void muse_ble_forget_all(void)")
+        started, stopped = forget.split("return;", 1)
+        self.assertIn("if (muse_link_ble_started())", started)
+        self.assertIn("ble_store_clear();", started)
+        self.assertIn('#define NIMBLE_BOND_NS "nimble_bond"', source)
+        self.assertIn("nvs_open(NIMBLE_BOND_NS, NVS_READWRITE, &h)", stopped)
+        self.assertIn("nvs_erase_all(h)", stopped)
+        self.assertIn("nvs_commit(h)", stopped)
+        # A start racing the erase may already hold the bonds in RAM: the
+        # first connection clears them before the link can encrypt.
+        self.assertLess(stopped.index("s_forget_pending = true;"), stopped.index("nvs_open("))
+        gap = _function_body(source, "int muse_ble_gap_event(struct ble_gap_event *ev)")
+        connect = gap[gap.index("case BLE_GAP_EVENT_CONNECT:"):gap.index("case BLE_GAP_EVENT_DISCONNECT:")]
+        self.assertIn("if (s_forget_pending) {", connect)
+        self.assertLess(connect.index("s_forget_pending = false;"), connect.index("ble_store_clear();"))
+
     def test_successful_setup_marks_complete_and_stops_ble(self) -> None:
         source = APP_C.read_text()
         dispatch = _function_body(BLE_SERVER_C.read_text(), "static void dispatch_command_ex(")
@@ -150,7 +190,7 @@ class LinkBleLifecycleContractTest(unittest.TestCase):
         worker = _function_body(ble, "static void pairing_client_finished_task(")
         disconnected = _function_body(app, "static void on_client_disconnected(")
 
-        self.assertIn("link_pairing_confirm_active_session()", button)
+        self.assertIn("link_pairing_confirm_active_session(button_pressed_after_us())", button)
         self.assertIn("notify_pairing_confirmed(session_generation)", button)
         self.assertIn('open_setup_window("button short-press")', button)
         self.assertIn("link_pairing_session_is_current(generation)", worker)
@@ -179,16 +219,31 @@ class LinkBleLifecycleContractTest(unittest.TestCase):
         start_timeout = _function_body(app, "static BaseType_t start_confirm_timeout(")
         self.assertIn("s_confirm_generation == generation", start_timeout)
         self.assertIn("link_pairing_session_is_current(session_generation)", start_timeout)
-        for signature, timeout in (
-            ("static void confirm_timeout_task(", "PAIRING_CONFIRM_WINDOW_MS"),
-            ("static void confirmed_idle_timeout_task(void *arg) {", "PAIRING_CONFIRMED_IDLE_TIMEOUT_MS"),
-        ):
+        # One-shot esp_timers, not tasks that sleep the windows out; the
+        # window is chosen at start.
+        self.assertIn("PAIRING_CONFIRM_WINDOW_MS : PAIRING_CONFIRMED_IDLE_TIMEOUT_MS", start_timeout)
+        self.assertIn("esp_timer_start_once(s_confirm_timer", start_timeout)
+        self.assertNotIn("TaskCreate", start_timeout)
+        for signature in ("static void confirm_timeout_task(void *arg) {",
+                          "static void confirmed_idle_timeout_task(void *arg) {"):
             handler = _function_body(app, signature)
-            self.assertIn(timeout, handler)
+            self.assertIn("s_confirm_generation == generation", handler)
             self.assertIn("link_pairing_session_is_current(session_generation)", handler)
             self.assertIn("ble_server_disconnect_pairing_session(session_generation)", handler)
             self.assertNotIn("link_pairing_reset()", handler)
             self.assertNotIn("ble_server_stop_advertising(true)", handler)
+        # The esp_timer callback only hands the timeout to its task (the send
+        # blocks), and leaves a timeout re-armed while it waited alone.
+        fire = _function_body(app, "static void confirm_timer_fire(void *arg) {")
+        self.assertIn("esp_timer_is_active(s_confirm_timer) ? CONFIRM_TO_NONE", fire)
+        self.assertIn("helper_task_create(confirm_timeout_task,", fire)
+        self.assertIn("helper_task_create(confirmed_idle_timeout_task,", fire)
+        self.assertNotIn("ble_server_send", fire)
+        self.assertNotIn("vTaskDelay", fire)
+        # Without memory for the task, the session still ends.
+        self.assertIn("ble_server_disconnect_pairing_session(session_generation)", fire)
+        advance = _function_body(app, "static uint32_t advance_confirm_generation_locked(void) {")
+        self.assertIn("esp_timer_stop(s_confirm_timer)", advance)
         disconnect = _function_body(ble, "static void disconnect_pairing_session_event(")
         self.assertLess(disconnect.index("link_pairing_reset_session(generation)"),
                         disconnect.index("ble_server_stop_advertising(true)"))
