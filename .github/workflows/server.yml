@@ -66,4 +66,4 @@ jobs:
           persist-credentials: false
 
       - name: ShellCheck
-        run: shellcheck server/install.sh server/deploy/dev-deploy.sh esp32/tools/muse/selfhost.sh
+        run: shellcheck server/install.sh server/deploy/dev-deploy.sh server/deploy/musehost-mdns.sh esp32/tools/muse/selfhost.sh

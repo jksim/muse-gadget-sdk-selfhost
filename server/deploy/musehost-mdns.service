@@ -1,0 +1,7 @@
+[Unit]
+Description=musehost: keep this Pi's mDNS name (@HOST@)
+After=avahi-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/musehost/server/deploy/musehost-mdns.sh @HOST@

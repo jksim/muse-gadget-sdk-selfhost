@@ -166,6 +166,31 @@ if [ "$first_install" = 1 ]; then
 fi
 [ -f "$state/dashboard.pw" ] && dashboard_on=1
 
+# BEGIN avahi-config (tests/test_mdns_name.py runs this block)
+# Avahi 0.8 can rename the Pi (muse-host-2.local) after a false conflict when
+# the Wi-Fi's IPv6 address changes at boot. Gadgets use IPv4, so turn IPv6 off.
+# Returns 0 when it changed the file; keeps the original once.
+configure_avahi() {
+    local conf=$1
+    [ -f "$conf" ] || return 1
+    grep -qx 'use-ipv6=no' "$conf" && return 1
+    [ -f "$conf.musehost-orig" ] || cp -p "$conf" "$conf.musehost-orig"
+    if grep -q '^#\?use-ipv6=' "$conf"; then
+        sed -i 's/^#\?use-ipv6=.*/use-ipv6=no/' "$conf"
+    else
+        sed -i 's/^\[server\]$/[server]\nuse-ipv6=no/' "$conf"
+    fi
+}
+# END avahi-config
+
+if configure_avahi /etc/avahi/avahi-daemon.conf; then
+    say "Avahi: IPv6 off, so the Pi keeps its name $hostname"
+    systemctl restart avahi-daemon
+fi
+for unit in musehost-mdns.service musehost-mdns.timer; do
+    sed -e "s/@HOST@/$hostname/" "$opt/server/deploy/$unit" > "/etc/systemd/system/$unit"
+done
+
 cat > /usr/local/bin/musehost <<WRAP
 #!/bin/sh
 # Run musehost as its service account, against the service's state.
@@ -182,6 +207,7 @@ sed -e "s/@BIND@/$bind/" -e "s/^SupplementaryGroups=.*/SupplementaryGroups=${gro
     "$opt/server/deploy/musehost.service" > /etc/systemd/system/musehost.service
 systemctl daemon-reload
 systemctl enable --quiet musehost
+systemctl enable --quiet --now musehost-mdns.timer
 systemctl restart musehost
 sleep 3
 systemctl is-active --quiet musehost || die "the service didn't start; see: journalctl -u musehost -n 50"
