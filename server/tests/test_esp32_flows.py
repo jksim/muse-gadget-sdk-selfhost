@@ -1,6 +1,7 @@
 """Flows shaped exactly like the ESP32 firmware's (noise_control.cpp, muse_chat_session.cpp)."""
 
 import asyncio
+import json
 
 from noise_client import NoiseClient
 
@@ -26,8 +27,15 @@ async def connect(live) -> NoiseClient:
     return await NoiseClient.connect(live.port, live.ca, live.vm_token())
 
 
-async def open_control(client: NoiseClient) -> int:
-    sid = await client.request("POST", "/link-control", end_body=False)
+def on_server(live, coro) -> asyncio.Future:
+    """Run ``coro`` on the server's event loop, where the hub lives, and await it here."""
+    return asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, live.app.state.loop))
+
+
+async def open_control(
+    client: NoiseClient, path: str = "/link-control", service: str = "daemon"
+) -> int:
+    sid = await client.request("POST", path, end_body=False, service=service)
     frame = await client.next_frame(sid)
     assert (frame.kind, frame.value.status, frame.value.end_body) == ("response", 200, False)
     return sid
@@ -90,6 +98,82 @@ def test_the_tunnel_is_refused(live):
         try:
             return await client.response(
                 await client.request("POST", "/link-tunnel", end_body=False)
+            )
+        finally:
+            await client.close()
+
+    status, _ = asyncio.run(scenario())
+    assert status == 404
+
+
+# 0.1.6 firmware (upstream #511): the control stream and the agent's name are on
+# the VM's Gadget API, Noise service 6. 0.1.5 firmware still uses /link-control.
+
+
+def test_register_on_the_gadget_api_gets_the_same_reply(live):
+    async def scenario():
+        client = await connect(live)
+        try:
+            sid = await open_control(client, "/api/gadget/control", "gadget")
+            await client.send_message(sid, REGISTER)
+            return await client.read_message(sid)
+        finally:
+            await client.close()
+
+    reply = asyncio.run(scenario())
+    assert reply == {"type": "res", "id": "3f0c-register", "result": {"status": "registered"}}
+
+
+def test_invoke_and_unpair_work_on_the_gadget_api(live):
+    async def scenario():
+        client = await connect(live)
+        try:
+            sid = await open_control(client, "/api/gadget/control", "gadget")
+            await client.send_message(sid, REGISTER)
+            await client.read_message(sid)
+            hub = live.app.state.hub
+            pending = on_server(
+                live, hub.invoke("homelink-abcdef", "device.health", {}, timeout_s=5)
+            )
+            invoke = await client.read_message(sid)
+            await client.send_message(
+                sid,
+                {"method": "link.result", "id": invoke["id"], "ok": True, "payload": {"ok": 1}},
+            )
+            result = await pending
+            unpair = on_server(live, hub.unpair("homelink-abcdef"))
+            event = await client.read_message(sid)
+            await unpair
+            return invoke, result, event
+        finally:
+            await client.close()
+
+    invoke, result, event = asyncio.run(scenario())
+    assert (invoke["method"], invoke["command"]) == ("link.invoke", "device.health")
+    assert result.ok and result.payload == {"ok": 1}
+    assert event == {"type": "event", "event": "link.unpaired"}
+
+
+def test_gadget_me_names_the_agent(live):
+    async def scenario():
+        client = await connect(live)
+        try:
+            sid = await client.request("GET", "/api/gadget/me", service="gadget")
+            return await client.response(sid)
+        finally:
+            await client.close()
+
+    status, body = asyncio.run(scenario())
+    assert status == 200
+    assert json.loads(body) == {"ok": True, "result": {"muse_name": "Clio"}}
+
+
+def test_the_gadget_api_tunnel_is_refused(live):
+    async def scenario():
+        client = await connect(live)
+        try:
+            return await client.response(
+                await client.request("POST", "/api/gadget/tunnel", end_body=False, service="gadget")
             )
         finally:
             await client.close()

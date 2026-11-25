@@ -259,6 +259,12 @@ async def identity(stream: Stream) -> None:
     await stream.respond_json(200, {"ok": True, "result": {"name": name}})
 
 
+async def gadget_me(stream: Stream) -> None:
+    """The Gadget API's discovery call: 0.1.6 firmware shows the agent's name."""
+    name = stream.session.ws.app.state.config.agent_name
+    await stream.respond_json(200, {"ok": True, "result": {"muse_name": name}})
+
+
 def bearer(ws: WebSocket) -> str:
     scheme, _, token = ws.headers.get("authorization", "").partition(" ")
     return token.strip() if scheme.lower() == "bearer" else ""

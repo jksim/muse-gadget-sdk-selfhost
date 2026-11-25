@@ -170,6 +170,10 @@ def create_app(state: Path, clock: Callable[[], float] = time.time) -> Starlette
         "/identity": noise_server.identity,
         "/link-control": link.link_control,
         "/link-tunnel": link.link_tunnel,
+        # 0.1.6 firmware: the same streams on the Gadget API (Noise service 6).
+        "/api/gadget/control": link.link_control,
+        "/api/gadget/tunnel": link.link_tunnel,
+        "/api/gadget/me": noise_server.gadget_me,
         "/chat/subscribe": chat.chat_subscribe,
         "/chat/stream": chat.chat_stream,
         "/tts": chat.tts,

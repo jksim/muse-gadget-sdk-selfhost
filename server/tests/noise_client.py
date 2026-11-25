@@ -24,6 +24,7 @@ class NoiseClient:
         self._pending: dict[int, list] = {}
         self._decoders: dict[int, MessageDecoder] = {}
         self._messages: dict[int, list] = {}
+        self._services: dict[int, str] = {}
 
     @classmethod
     async def connect(
@@ -53,13 +54,24 @@ class NoiseClient:
     # -- Sending ------------------------------------------------------------------
 
     async def request(
-        self, verb: str, path: str, body: bytes = b"", end_body: bool = True, headers=None
+        self,
+        verb: str,
+        path: str,
+        body: bytes = b"",
+        end_body: bool = True,
+        headers=None,
+        service: str = "daemon",
     ) -> int:
         hdrs = [Header(k, v) for k, v in (headers or {}).items()]
         if end_body:
-            encrypted = self.transport.encrypt_http_request(verb, path, body, headers=hdrs)
+            encrypted = self.transport.encrypt_http_request(
+                verb, path, body, headers=hdrs, service=service
+            )
         else:
-            encrypted = self.transport.start_stream_request(verb, path, headers=hdrs)
+            encrypted = self.transport.start_stream_request(
+                verb, path, headers=hdrs, service=service
+            )
+        self._services[encrypted.stream_id] = service
         for frame in encrypted.frames:
             await self.ws.send(frame)
         if body and not end_body:
@@ -67,7 +79,10 @@ class NoiseClient:
         return encrypted.stream_id
 
     async def send_chunk(self, stream_id: int, data: bytes, end_body: bool = False) -> None:
-        for frame in self.transport.encrypt_body_chunk(stream_id, data, end_body=end_body):
+        service = self._services.get(stream_id, "daemon")
+        for frame in self.transport.encrypt_body_chunk(
+            stream_id, data, service=service, end_body=end_body
+        ):
             await self.ws.send(frame)
 
     async def send_message(self, stream_id: int, message: dict) -> None:
