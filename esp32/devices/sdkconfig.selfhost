@@ -24,3 +24,6 @@ CONFIG_MUSE_TTS_PATH="/tts"
 # Self-host gadgets never talk to Muse's servers, so no SDK token is needed:
 # don't warn about its absence on every build.
 CONFIG_GADGET_SDK_TOKEN_WARN=n
+# Pairing names this host (api_url_v2, noise_host). Release builds accept only
+# Meta's server hosts (components/muse/muse_server_hosts.h), so accept any.
+CONFIG_HOMEHUB_CUSTOM_SERVER_HOSTS=y
