@@ -27,6 +27,25 @@ def when(epoch) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(epoch)) if epoch else "-"
 
 
+def duration(seconds) -> str:
+    if seconds is None:
+        return "-"
+    hours, minutes = seconds // 3600, seconds % 3600 // 60
+    return f"{hours} h {minutes} min" if hours else f"{minutes} min {seconds % 60} s"
+
+
+def last_crash(store, node_id: str) -> dict | None:
+    """The gadget's newest crash report, ready to show; only validated fields."""
+    row = store.crash_report(node_id)
+    if row is None:
+        return None
+    return {
+        **dict(row),
+        "received": when(row["received_at"]),
+        "uptime": duration(row["uptime_seconds"]),
+    }
+
+
 def gadget_rows(hub, store) -> list[dict]:
     """Enrolled gadgets from the store, with what the hub knows of them now."""
     live = {d.node_id: d for d in hub.devices()}
@@ -122,6 +141,7 @@ def routes(state: Path, parent) -> list[Route]:
             {
                 "title": gadget["name"],
                 "gadget": gadget,
+                "crash": last_crash(store(), node_id),
                 "allowed": allowed,
                 "commands": [
                     (name, (spec or {}).get("description", "")) for name, spec in commands

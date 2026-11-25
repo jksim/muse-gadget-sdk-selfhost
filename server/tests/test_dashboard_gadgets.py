@@ -3,6 +3,7 @@
 import asyncio
 import re
 import tempfile
+import time
 from types import SimpleNamespace
 
 from starlette.testclient import TestClient
@@ -597,3 +598,60 @@ def test_the_service_can_reach_usb_serial_and_nothing_else():
     assert [s for s in settings if s.startswith("DeviceAllow=")] == ["DeviceAllow=char-ttyACM rw"]
     groups = next(s for s in settings if s.startswith("SupplementaryGroups=")).split("=", 1)[1]
     assert set(groups.split()) == {"dialout", "plugdev", "bluetooth"}
+
+
+def crash_section(text: str) -> str:
+    start = text.index("<h2>Last crash</h2>")
+    return text[start : text.index("</section>", start)]
+
+
+def save_crash(app, **changes):
+    from test_crash_report import FULL
+
+    from musehost import crash_report
+
+    report = crash_report.validate({**FULL, "report": {**FULL["report"], **changes}})
+    app.state.tokens.store.save_crash_report(NODE, report, received_at=1764072000)
+
+
+def test_the_detail_page_shows_the_last_crash(state):
+    app, client, _ = dashboard(state)
+    enroll(app)
+    save_crash(app)
+    section = crash_section(client.get(f"/dashboard/gadgets/{NODE}").text)
+    for shown in (
+        "panic",
+        "0.1.6",
+        "a1b2c3d4e5f60718",
+        "Load access fault",
+        "muse_ui.c:88 in draw",
+        "0x42012345",
+        "0x4200a1b2",
+        "1 h 28 min",
+        time.strftime("%Y-%m-%d %H:%M", time.localtime(1764072000)),
+    ):
+        assert shown in section, shown
+    count_row = section[section.index("In a row") :].split("</tr>")[0]
+    assert ">2<" in count_row
+
+
+def test_the_last_crash_is_escaped(state):
+    app, client, _ = dashboard(state)
+    enroll(app)
+    save_crash(app, fault={"cause": "<script>alert(1)</script>"})
+    section = crash_section(client.get(f"/dashboard/gadgets/{NODE}").text)
+    assert "<script>alert(1)" not in section and "&lt;script&gt;" in section
+
+
+def test_a_gadget_without_a_crash_says_so(state):
+    app, client, _ = dashboard(state)
+    enroll(app)
+    assert "No crash reported" in crash_section(client.get(f"/dashboard/gadgets/{NODE}").text)
+
+
+def test_a_revoked_gadget_still_shows_its_last_crash(state):
+    app, client, _ = dashboard(state)
+    enroll(app)
+    save_crash(app)
+    app.state.tokens.revoke(NODE)
+    assert "Load access fault" in crash_section(client.get(f"/dashboard/gadgets/{NODE}").text)

@@ -19,6 +19,25 @@
   <div id="health"></div>
 </section>
 {% endif %}
+<section>
+  <h2>Last crash</h2>
+  {% if crash %}
+  <table>
+    <tr><th>Received</th><td>{{ crash.received }}</td></tr>
+    <tr><th>Reason</th><td>{{ crash.reason }}</td></tr>
+    <tr><th>In a row</th><td>{{ crash.consecutive_count }}</td></tr>
+    <tr><th>Version</th><td>{{ crash.version or "-" }}</td></tr>
+    <tr><th>Build</th><td><code>{{ crash.build_sha or "-" }}</code></td></tr>
+    <tr><th>Uptime</th><td>{{ crash.uptime }}</td></tr>
+    <tr><th>Cause</th><td>{{ crash.fault_cause or "-" }}</td></tr>
+    <tr><th>Detail</th><td>{{ crash.fault_detail or "-" }}</td></tr>
+    <tr><th>Address</th><td><code>{{ crash.fault_address or "-" }}</code></td></tr>
+    <tr><th>Return address</th><td><code>{{ crash.fault_return_address or "-" }}</code></td></tr>
+  </table>
+  {% else %}
+  <p class="muted">No crash reported.</p>
+  {% endif %}
+</section>
 {% if commands %}
 <section>
   <h2>Commands</h2>
