@@ -144,3 +144,21 @@ def test_brain_turns_log_no_content_tool_data_or_keys(caplog):
     assert "device.health" in logs and "answered" in logs
     for secret in ("hunter2", "4711", "swordfish", "sk-ant-SECRET-KEY"):
         assert secret not in logs, secret
+
+
+def test_crash_reports_log_only_the_five_listed_fields(live, caplog, capfd):
+    import asyncio
+
+    from test_crash_report import FULL, send_report, with_fault, with_report
+
+    caplog.set_level(logging.DEBUG)
+    planted = with_fault(detail="wifi Sunflower-5G pass hunter2")
+    asyncio.run(send_report(live, planted))
+    asyncio.run(send_report(live, with_report(reason="swordfish")))
+    host = [r for r in caplog.records if not r.name.startswith("websockets.client")]
+    logs = "\n".join(r.getMessage() for r in host) + capfd.readouterr().err
+    assert "crash report from homelink-abcdef" in logs  # it was logged
+    fault = FULL["report"]["fault"]
+    unlisted = ["Sunflower", "hunter2", "swordfish", "a1b2c3d4e5f60718", "5321"]
+    unlisted += [fault["address"], fault["return_address"]]
+    assert [text for text in unlisted if text in logs] == []

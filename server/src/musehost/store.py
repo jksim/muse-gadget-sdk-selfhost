@@ -62,6 +62,19 @@ CREATE TABLE IF NOT EXISTS grants (
     expires_at INTEGER NOT NULL,
     used_at    INTEGER
 );
+CREATE TABLE IF NOT EXISTS crash_reports (
+    node_id              TEXT PRIMARY KEY REFERENCES devices (node_id) ON DELETE CASCADE,
+    received_at          INTEGER NOT NULL,
+    reason               TEXT NOT NULL,
+    consecutive_count    INTEGER NOT NULL,
+    version              TEXT,
+    build_sha            TEXT,
+    uptime_seconds       INTEGER,
+    fault_address        TEXT,
+    fault_return_address TEXT,
+    fault_cause          TEXT,
+    fault_detail         TEXT
+);
 """
 
 
@@ -95,6 +108,23 @@ class Store:
             "SELECT node_id, display_name, enrolled_at, last_seen, revoked_at "
             "FROM devices ORDER BY enrolled_at, node_id"
         ).fetchall()
+
+    def save_crash_report(self, node_id: str, report: dict, received_at: int) -> None:
+        """Keep only the newest report per gadget; ``report`` is from crash_report.validate."""
+        self.db.execute(
+            "INSERT OR REPLACE INTO crash_reports (node_id, received_at, reason, "
+            "consecutive_count, version, build_sha, uptime_seconds, fault_address, "
+            "fault_return_address, fault_cause, fault_detail) VALUES (:node_id, "
+            ":received_at, :reason, :consecutive_count, :version, :build_sha, "
+            ":uptime_seconds, :fault_address, :fault_return_address, :fault_cause, "
+            ":fault_detail)",
+            {**report, "node_id": node_id, "received_at": received_at},
+        )
+
+    def crash_report(self, node_id: str):
+        return self.db.execute(
+            "SELECT * FROM crash_reports WHERE node_id = ?", (node_id,)
+        ).fetchone()
 
     def close(self) -> None:
         self.db.close()

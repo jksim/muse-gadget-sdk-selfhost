@@ -11,10 +11,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
+import time
 import uuid
 
 from musegadget.link_client import MessageDecoder, encode_message
 
+from musehost import crash_report
 from musehost.hub import DeviceOffline, InvokeResult, InvokeTimeout
 from musehost.noise_server import Stream
 
@@ -44,8 +47,29 @@ class LinkConnection:
             self.hub.heartbeat(self.node_id)
         elif method == "link.result":
             self._result(message)
+        elif method == "link.error_report":
+            self._crash_report(message)
         else:
             log.debug("ignoring %s from %s", method or message.get("type"), self.node_id)
+
+    def _crash_report(self, message: dict) -> None:
+        report = crash_report.validate(message)
+        if report is None:
+            log.warning("ignoring a crash report from %s outside the contract", self.node_id)
+            return
+        log.info(
+            "crash report from %s: reason=%s count=%d version=%s cause=%s",
+            self.node_id,
+            report["reason"],
+            report["consecutive_count"],
+            report["version"],
+            report["fault_cause"],
+        )
+        store = self.stream.session.ws.app.state.tokens.store
+        try:
+            store.save_crash_report(self.node_id, report, int(time.time()))
+        except sqlite3.Error as exc:
+            log.warning("couldn't save the crash report from %s: %s", self.node_id, exc)
 
     async def invoke(self, command: str, params: dict, timeout_s: float) -> InvokeResult:
         invoke_id = str(uuid.uuid4())
