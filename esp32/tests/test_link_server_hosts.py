@@ -304,7 +304,10 @@ int main(void) {{
         files = run(["git", "ls-files", "--", "*sdkconfig*"])
         if files.returncode != 0:
             self.skipTest("not a git checkout")
-        configs = [ROOT / name for name in files.stdout.split()]
+        # The self-host fork pairs with the user's own host, so its overlay
+        # turns the option on; test_selfhost_overlay.py checks the rest.
+        configs = [ROOT / name for name in files.stdout.split()
+                   if name != "devices/sdkconfig.selfhost"]
         self.assertTrue(configs)
         for config in configs:
             text = config.read_text(errors="replace")
